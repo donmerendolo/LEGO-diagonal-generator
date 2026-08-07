@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LEGO diagonal generator</title>
+<style>
+  :root { --line:#cbd6e2; --ink:#1e2c3a; --sky:#2e7de9; }
+  * { box-sizing: border-box; }
+  /* The page itself never scrolls; the panels scroll inside themselves. The single
+     row has to be minmax(0, 1fr) and not the implicit auto, or it is sized by its
+     contents and a tall panel stretches it straight past the bottom of the window. */
+  body { margin:0; font:16px/1.4 system-ui, sans-serif; color:var(--ink); background:#eef2f7;
+         display:grid; grid-template-columns:190px 1fr 250px; grid-template-rows:minmax(0, 1fr);
+         height:100vh; overflow:hidden; }
+
+  /* Each side panel is a column that scrolls in the middle and not at the ends.
+     The buttons that finish a job sit in the part that cannot scroll, so they are
+     always there — which is what sticky positioning only manages some of the time. */
+  /* min-height:0 on both, or the default min-height:auto lets the content push the
+     column past the viewport and the whole page scrolls instead of the middle. */
+  aside { background:#fff; display:flex; flex-direction:column; overflow:hidden; min-height:0; }
+  aside:first-child { border-right:1px solid var(--line); }
+  aside:last-child { border-left:1px solid var(--line); }
+  .scroll { flex:1; min-height:0; overflow:auto; padding:12px; }
+  .foot { flex:none; padding:12px; border-top:1px solid var(--line); }
+
+  h2 { font-size:15px; margin:18px 0 8px; }
+  h2:first-of-type { margin-top:0; }
+  /* No native dragging or text selection: the pointer is ours, we are drawing with it. */
+  #board { touch-action:none; background:#fff; width:100%; height:100%; display:block;
+           user-select:none; -webkit-user-select:none; -webkit-user-drag:none; }
+  #board.panning, #board.panning * { cursor:grabbing; }
+
+  #flags { display:flex; gap:6px; margin-bottom:14px; }
+  #flags button { padding:2px; border:2px solid var(--line); border-radius:6px; background:#fff;
+                  cursor:pointer; line-height:0; opacity:0.45; }
+  #flags button.on { opacity:1; border-color:var(--sky); }
+
+  .pick { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  .pick button { border:2px solid var(--line); border-radius:12px; background:#fff; cursor:pointer;
+                 padding:4px 2px; font-size:11px; color:#6d7d8f; }
+  .pick button:hover { border-color:var(--sky); }
+  .pick img { width:100%; height:48px; object-fit:contain; display:block; pointer-events:none; }
+
+  /* Two ways to mark a hole, and only two, so they are shown side by side with the
+     one in use lit. Each carries the mark it makes, which is the whole
+     explanation. */
+  #tools { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  #tools button { border:2px solid var(--line); border-radius:12px; background:#fff; cursor:pointer;
+                  padding:8px 4px; font:inherit; font-size:12px; line-height:1.2; }
+  #tools button.on { border-color:var(--sky); background:#eaf2ff; }
+  #tools svg { display:block; margin:0 auto 4px; }
+
+  .row { display:flex; align-items:center; gap:6px; margin:6px 0; font-size:13px; }
+  .row > span, .row > label { flex:1; }
+  input, select { width:80px; padding:4px; border:1px solid var(--line); border-radius:6px; font:inherit; }
+  fieldset { border:0; padding:0; margin:0; }
+  fieldset:disabled { opacity:0.4; }
+  button.big, label.big { display:block; width:100%; padding:10px; margin:6px 0; font:inherit;
+                          border-radius:12px; border:2px solid var(--line); background:#fff;
+                          cursor:pointer; text-align:center; }
+  button.big:disabled { opacity:0.4; cursor:default; }
+  .foot .big:first-child { margin-top:0; }
+  .foot .big:last-child { margin-bottom:0; }
+  #file { display:none; }
+  #stats { font-size:12px; white-space:pre-wrap; background:#eef2f7; padding:8px; border-radius:8px; }
+  .warn { color:#b3261e; }
+</style>
+</head>
+<body>
+
+<aside>
+  <div class="scroll">
+    <div id="flags">
+      <button data-lang="en" title="English"><svg width="26" height="13" viewBox="0 0 60 30">
+        <rect width="60" height="30" fill="#012169"/>
+        <path d="M0,0 60,30 M60,0 0,30" stroke="#fff" stroke-width="6"/>
+        <path d="M0,0 60,30 M60,0 0,30" stroke="#C8102E" stroke-width="2.5"/>
+        <path d="M30,0 V30 M0,15 H60" stroke="#fff" stroke-width="10"/>
+        <path d="M30,0 V30 M0,15 H60" stroke="#C8102E" stroke-width="6"/></svg></button>
+      <button data-lang="es" title="Español"><svg width="26" height="13" viewBox="0 0 60 30">
+        <rect width="60" height="30" fill="#AA151B"/>
+        <rect y="7.5" width="60" height="15" fill="#F1BF00"/></svg></button>
+    </div>
+
+    <h2 data-i18n="parts"></h2>
+    <div class="pick" id="partPick"></div>
+  </div>
+
+  <div class="foot">
+    <label class="big" for="file" data-i18n="open"></label>
+    <input type="file" id="file" accept=".ldr,.io,.mpd">
+  </div>
+</aside>
+
+<main>
+  <svg id="board" viewBox="-400 -300 800 600">
+    <defs>
+      <pattern id="holes" patternUnits="userSpaceOnUse" width="20" height="20" x="10" y="10">
+        <circle cx="10" cy="10" r="6" fill="none" stroke="#dae2ec" stroke-width="2.2"/>
+      </pattern>
+    </defs>
+    <rect x="-6000" y="-6000" width="12000" height="12000" fill="url(#holes)"/>
+    <g id="scene"></g>
+  </svg>
+</main>
+
+<aside>
+  <div class="scroll">
+    <h2 data-i18n="marks"></h2>
+    <div id="tools">
+      <button data-tool="join">
+        <svg width="46" height="20" viewBox="-23 -10 46 20">
+          <line x1="-11" y1="0" x2="11" y2="0" stroke="#9fb0c0" stroke-width="2.5"/>
+          <circle cx="-11" cy="0" r="6" fill="#c91a09" stroke="#1e2c3a" stroke-width="1.5"/>
+          <circle cx="11" cy="0" r="6" fill="#c91a09" stroke="#1e2c3a" stroke-width="1.5"/>
+        </svg><span data-i18n="join"></span></button>
+      <button data-tool="hold">
+        <svg width="46" height="20" viewBox="-14 -8 28 26">
+          <circle r="4.5" fill="#2b3440"/>
+          <path d="M0,3 L-7,13 L7,13 Z" fill="#2b3440"/>
+          <path d="M-9,13 H9" stroke="#2b3440" stroke-width="2"/>
+          <path d="M-8,18 l3,-5 M-2,18 l3,-5 M4,18 l3,-5" stroke="#2b3440" stroke-width="1.6"/>
+        </svg><span data-i18n="hold"></span></button>
+    </div>
+
+    <fieldset id="insp" disabled>
+      <h2 data-i18n="selected"></h2>
+      <div class="row"><span data-i18n="angle"></span><input id="i-angle" type="number" step="1"></div>
+      <div class="row"><span data-i18n="level"></span><input id="i-level" type="number" step="1"></div>
+      <button class="big" id="i-del" data-i18n="remove"></button>
+    </fieldset>
+
+    <h2 data-i18n="board"></h2>
+    <div class="row"><span data-i18n="snap"></span>
+      <select id="snap">
+        <option value="stud" data-i18n="snapStud"></option>
+        <option value="half" data-i18n="snapHalf"></option>
+        <option value="free" data-i18n="snapFree"></option>
+      </select></div>
+    <div class="row">
+      <button class="big" id="undo" data-i18n="undo" title="Ctrl+Z"></button>
+      <button class="big" id="redo" data-i18n="redo" title="Ctrl+Shift+Z"></button>
+    </div>
+
+    <div id="result">
+      <h2 data-i18n="result"></h2>
+      <div id="stats"></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <button class="big" id="save" data-i18n="save"></button>
+    <button class="big" id="reset" data-i18n="reset"></button>
+  </div>
+</aside>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

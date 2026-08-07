@@ -11,6 +11,7 @@ import { findLibrary, holesOf } from './library.js';
 import { moved, run } from './diagonal.js';
 import { solvePlanar } from './solve.js';
 
+const deg = (rad) => rad * 180 / Math.PI;
 const ok = (name, got, want, tol) => {
   if (!(Math.abs(got - want) <= tol)) throw new Error(`${name}: ${got} != ${want}`);
   console.log(`ok  ${name} = ${got.toFixed(6)}`);
@@ -57,6 +58,21 @@ for (const flip of [1, -1]) {
   same('and they are not the same one', Math.abs(up) > 0.1, true);
 }
 
+// Sliding beats turning. A beam on its own, joined by one end hole to a point 40
+// LDU to the side, has a whole family of ways to get there and the shortest step
+// decides. Measured in radians against LDU, turning looks 120 times cheaper and
+// the beam swings; measured against the beam's own reach, it slides.
+{
+  const bodies = [{ c: [0, 0], lever: 120 }];
+  const { q, error } = solvePlanar(bodies, [
+    { a: { body: 0, c: [0, 0], p: [0, -120] }, b: { body: null, p: [40, -120] } }]);
+  ok('the joint still closes', error[0], 0, 1e-9);
+  ok('it got there by sliding', q[0][0], 40, 0.5);
+  // The number to hold is the one you would notice, not the constant that
+  // produces it: a twentieth of a degree is not a beam that came out crooked.
+  ok('and turned less than a twentieth of a degree', deg(q[0][2]), 0, 0.05);
+}
+
 // Nobody marked it, so nobody moved it.
 {
   const [bodies, constraints] = triangle(1);
@@ -95,24 +111,65 @@ if (!root) {
   // The hole diagonales.ldr puts its second pin in: local (16, 0, 132) on the
   // bent liftarm, which is what makes that marker belong to that part and no
   // other. Read off the part, never written down here.
-  const near = (p) => Math.hypot(p[0] - 16, p[1], p[2] - 132);
+  const near = ({ at }) => Math.hypot(at[0] - 16, at[1], at[2] - 132);
   ok('the bent liftarm has a hole at 16,0,132',
     Math.min(...holesOf(root, '32271.dat').map(near)), 0, 1e-6);
   // A hole can be drawn twice, once for each face, so count places and not
   // references — the same reason the marker only ever has to match in X and Z.
-  const spread = holesOf(root, '41239.dat').map((h) => h[2]);
+  const spread = holesOf(root, '41239.dat').map((h) => h.at[2]);
   ok('the beam 13 has 13 holes in a row', new Set(spread).size, 13, 0);
   ok('spanning 12 studs', Math.max(...spread) - Math.min(...spread), 240, 1e-6);
+  same('a plain beam has no axle holes', holesOf(root, '41239.dat').some((h) => h.axle), false);
+
+  // The 3 x 3 bent 90 takes an axle at both ends and at the corner, and a pin in
+  // the middle of each arm. Drawing all five alike is what sends someone to the
+  // parts bin for a pin that will not go in.
+  const bent = new Set(holesOf(root, '32056.dat')
+    .filter((h) => h.axle).map((h) => `${h.at[0]},${h.at[2]}`));
+  same('the 3 x 3 bent 90 has axle holes at its ends and corner',
+    [...bent].sort().join(' '), '0,0 0,40 40,0');
 }
 
 // The whole tool, on the model it was written for. Run here rather than read
 // from a file lying about, so the check cannot pass on yesterday's answer.
 if (root) {
-  const out = Deno.makeTempFileSync({ suffix: '.ldr' });
-  run('diagonales.ldr', out, root);
-  const pins = parseModel(Deno.readTextFileSync(out)).filter((l) => l.part === '3749.dat');
-  Deno.removeSync(out);
-  same('both marker pins ended up in one place',
-    pins.length === 2 && Math.hypot(pins[0].t[0] - pins[1].t[0], pins[0].t[2] - pins[1].t[2]) < 1e-6,
-    true);
+  // Nothing here knows what is in the sample files, so they can be redrawn in
+  // Studio without the test having to be rewritten after it.
+  const solve = async (from) => {
+    const out = Deno.makeTempFileSync({ suffix: '.ldr' });
+    const res = await run(from, out, root);
+    const text = Deno.readTextFileSync(out);
+    Deno.removeSync(out);
+    return { ...res, text };
+  };
+
+  for (const from of ['diagonales.ldr', 'diagonales.io']) {
+    const solved = await solve(from);
+    ok(`${from} closes`, solved.worst, 0, 1e-9);
+
+    // Whatever the solver reported, the file has to agree: every pin of a
+    // colour standing in one place, measured off the text that was written.
+    const groups = new Map();
+    for (const l of parseModel(solved.text).filter((l) => l.part === '3749.dat'))
+      groups.set(l.colour, [...(groups.get(l.colour) ?? []), l]);
+    const spread = Math.max(...[...groups.values()].flatMap((g) =>
+      g.map((l) => Math.hypot(l.t[0] - g[0].t[0], l.t[2] - g[0].t[2]))));
+    ok(`${from} put every joint's pins in one place`, spread, 0, 1e-6);
+
+    // And solving the answer again is a no-op, which is the only way the file
+    // can go back into Studio, get nudged, and come out here again.
+    const twice = Deno.makeTempFileSync({ suffix: '.ldr' });
+    Deno.writeTextFileSync(twice, solved.text);
+    const again = await solve(twice);
+    same(`${from} is already solved once it is solved`, again.text, solved.text);
+    Deno.removeSync(twice);
+
+    // Which it would also be if every joint had quietly collapsed onto one part:
+    // in a solved model both pins of a joint stand in the same place, and both
+    // parts have a hole there, so the two have to be told apart on purpose.
+    const paired = (res) => [...res.joints.values()]
+      .every((g) => new Set(g.map((e) => e.body.index)).size === g.length);
+    same(`${from} still joins two different parts when solved again`,
+      paired(solved) && paired(again) && solved.joints.size > 0, true);
+  }
 }

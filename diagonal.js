@@ -1,4 +1,4 @@
-// deno run --allow-read --allow-write --allow-env diagonal.js modelo.ldr
+// deno run -A diagonal.js modelo.ldr        (or modelo.io, straight from Studio)
 //
 // Reads a model laid out roughly by hand in Studio, reads the marker pins in it,
 // works out where every part has to go for the marked holes to meet, and writes
@@ -16,59 +16,51 @@
 
 import { apply, MM, mul, parseModel, rotY, STUD, writeModel } from './ldraw.js';
 import { colourName, describe, findLibrary, holesOf } from './library.js';
+import { readStudio } from './io.js';
+import { assignMarkers, leverOf } from './marks.js';
 import { solvePlanar } from './solve.js';
 
 const GROUND = '43093.dat';
 const JOINT = '3749.dat';
-const SNAP = 0.5;              // LDU a marker may sit from the hole it is in
 
 const deg = (rad) => rad * 180 / Math.PI;
 const pad = (s, n) => String(s).padEnd(n);
 
 // ---------- reading the model ----------
 
-// Which part is this marker snapped into? Answered off the part library rather
-// than guessed: the marker sits on one of that part's holes, to the LDU. Only X
-// and Z are compared, so a pin joining two parts on different levels — one long
-// pin through both — is a joint like any other.
-function bodyOf(marker, bodies) {
-  let best = null;
-  for (const b of bodies) {
-    for (const h of b.holes) {
-      if (Math.abs(h[0] - marker.t[0]) > SNAP || Math.abs(h[2] - marker.t[2]) > SNAP) continue;
-      const away = Math.abs(h[1] - marker.t[1]);
-      if (!best || away < best.away) best = { body: b, away };
-    }
-  }
-  return best?.body ?? null;
-}
-
 function build(lines, root) {
   const bodies = [], markers = [];
   for (const line of lines) {
     if (!line.part) continue;
     if (line.part === GROUND || line.part === JOINT) { markers.push(line); continue; }
+    const holes = holesOf(root, line.part)
+      .map((h) => apply(line.m, line.t, h.at))
+      .map(([x, y, z]) => ({ x, y, z }));
     bodies.push({
       line,
       index: bodies.length,
       what: describe(root, line.part),
-      holes: holesOf(root, line.part).map((h) => apply(line.m, line.t, h)),
+      holes,
       c: [line.t[0], line.t[2]],
+      lever: leverOf(holes, { x: line.t[0], z: line.t[2] }),
       markers: [],
     });
   }
 
-  const stray = [];
-  const held = [], joints = new Map();
-  for (const marker of markers) {
-    const body = bodyOf(marker, bodies);
-    if (!body) { stray.push(marker); continue; }
+  const stray = [], held = [], joints = new Map();
+  const owner = assignMarkers(markers.map((m) => ({
+    x: m.t[0], y: m.t[1], z: m.t[2], group: m.part === GROUND ? null : m.colour,
+  })), bodies);
+
+  markers.forEach((marker, k) => {
+    const body = bodies[owner[k]];
+    if (!body) { stray.push(marker); return; }
     body.markers.push(marker);
-    const at = { body: body.index, c: body.c, p: [marker.t[0], marker.t[2]] };
-    if (marker.part === GROUND) { held.push({ body, at, marker }); continue; }
+    const entry = { body, marker, at: { body: body.index, c: body.c, p: [marker.t[0], marker.t[2]] } };
+    if (marker.part === GROUND) { held.push(entry); return; }
     if (!joints.has(marker.colour)) joints.set(marker.colour, []);
-    joints.get(marker.colour).push({ body, at, marker });
-  }
+    joints.get(marker.colour).push(entry);
+  });
 
   // One pin of a colour has nobody to meet. It is a half-finished thought, not a
   // constraint, and silently dropping it would leave the model looking solved.
@@ -150,8 +142,12 @@ function report(model, out, root) {
 
 // ---------- the tool ----------
 
-function run(path, outPath, root) {
-  const lines = parseModel(Deno.readTextFileSync(path));
+const readModel = async (path) => (path.toLowerCase().endsWith('.io')
+  ? readStudio(Deno.readFileSync(path))
+  : Deno.readTextFileSync(path));
+
+async function run(path, outPath, root) {
+  const lines = parseModel(await readModel(path));
   const model = build(lines, root);
   const { bodies, held, joints } = model;
   if (!bodies.length) throw new Error('no parts in that file');
@@ -177,6 +173,7 @@ function run(path, outPath, root) {
   }
   Deno.writeTextFileSync(outPath, writeModel(lines).replace(/\s+$/, '') + '\n');
   console.log(report({ ...model, q, error, path }, outPath, root));
+  return { ...model, q, error, worst: Math.max(0, ...error) };
 }
 
 if (import.meta.main) {
@@ -191,7 +188,7 @@ if (import.meta.main) {
     console.error('cannot find the LDraw library. Pass --ldraw=DIR or set LDRAWDIR.');
     Deno.exit(2);
   }
-  run(args[0], flag('out') ?? args[0].replace(/\.[^.]+$/, '') + '-solved.ldr', root);
+  await run(args[0], flag('out') ?? args[0].replace(/\.[^.]+$/, '') + '-solved.ldr', root);
 }
 
 export { build, moved, run };

@@ -4,11 +4,14 @@
 // A part's own .dat says where its holes are, the same way the chain generator
 // took every diameter off the model instead of writing it down.
 //
-// A hole is any sub-file whose name contains "hol" — beamhole, connhole,
-// peghole, npeghole, axlehol4, npeghol4. Being generous is the safe side: a
-// candidate nobody ever puts a pin in costs nothing, because the holes are only
-// ever used to answer "which part is this marker snapped into", and a spurious
-// one is never where a marker sits. A hole *missed* loses a joint.
+// A hole is a sub-file called beamhole, connhole, peghole or axlehol-something,
+// and its own origin is the centre of the hole. Not everything with "hol" in the
+// name is one: npeghole and npeghol4 are the rim *between* two holes, half a stud
+// off, and a beam that offered a hole there would be lying.
+//
+// If a hole shape ever turns up under a name not on that list, nothing here goes
+// quietly wrong: a marker pin that lands on it belongs to no part, and the tool
+// says so and names the pin.
 
 import { apply, mul, parseModel } from './ldraw.js';
 
@@ -29,15 +32,22 @@ export function findLibrary(given) {
   return null;
 }
 
-// Sub-file names carry their own folder ("s/32271s01.dat", "48/4-4cyli.dat"),
-// so `parts` and `p` are the only two places to look.
+// Sub-file names carry their own folder ("s/32271s01.dat", "48/4-4cyli.dat"), so
+// only the library roots have to be tried.
+//
+// UnOfficial among them: Studio keeps every part LDraw has not adopted yet
+// there, which is most of the ones released in the last few years. Leaving it out
+// does not fail loudly — the part simply has no holes, and every marker pin in it
+// is reported as belonging to nothing.
+const SEARCH = ['parts', 'p', 'UnOfficial/parts', 'UnOfficial/p'];
+
 const files = new Map();
 function readPart(root, name) {
   if (!files.has(name)) {
     let found = null;
-    for (const dir of ['parts', 'p']) {
+    for (const dir of SEARCH) {
       try {
-        found = { dir, text: Deno.readTextFileSync(`${root}/${dir}/${name}`) };
+        found = { primitive: dir.endsWith('p'), text: Deno.readTextFileSync(`${root}/${dir}/${name}`) };
         break;
       } catch { /* next */ }
     }
@@ -46,12 +56,21 @@ function readPart(root, name) {
   return files.get(name);
 }
 
+// An axle hole takes an axle and will not let it turn; a pin hole is round and
+// will. Both take an axle pin, so either can be marked, but a drawing that shows
+// them alike is a drawing that has to be double checked against the real part.
+const base = (name) => name.split('/').pop();
+const isHole = (name) => /^(beamhole|connhole|peghole|axlehol)/i.test(base(name));
+const isAxle = (name) => /^axlehol/i.test(base(name));
+
+export const partText = (root, name) => readPart(root, name)?.text ?? null;
+
 function walk(root, name, m, t, out, depth) {
-  if (/hol/i.test(name)) { out.push(t); return; }   // the reference's own origin
+  if (isHole(name)) { out.push({ at: t, axle: isAxle(name) }); return; }
   const file = readPart(root, name);
   // Primitives that are not holes are cylinders, discs and edges: nothing below
   // them is a connection point, and there are thousands of them.
-  if (!file || file.dir === 'p' || depth > 6) return;
+  if (!file || file.primitive || depth > 6) return;
   for (const l of parseModel(file.text)) {
     if (!l.part) continue;
     walk(root, l.part, mul(m, l.m), apply(m, t, l.t), out, depth + 1);
@@ -68,10 +87,15 @@ export function holesOf(root, part) {
   return holes.get(part);
 }
 
+// The description is the first comment line, except in the unofficial files,
+// which open with "0 FILE <name>" and put it on the line after. LDraw also pads
+// its descriptions into columns, and nothing here wants that.
 export function describe(root, part) {
-  const file = readPart(root, part);
-  // LDraw pads its descriptions into columns; nothing here wants that.
-  return file?.text.split(/\r?\n/, 1)[0].replace(/^0\s*/, '').replace(/\s+/g, ' ').trim() || part;
+  for (const line of readPart(root, part)?.text.split(/\r?\n/, 3) ?? []) {
+    const said = line.replace(/^0\s*/, '').replace(/\s+/g, ' ').trim();
+    if (said && !/^(FILE|Name:)\b/i.test(said)) return said;
+  }
+  return part;
 }
 
 // Colour names, so the report can say "the Tan joint" and you can find it in

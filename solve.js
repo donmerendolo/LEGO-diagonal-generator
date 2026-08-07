@@ -21,6 +21,26 @@ function place(q, term) {
   return [term.c[0] + ux * c + uz * s + dx, term.c[1] - ux * s + uz * c + dz];
 }
 
+// Sliding and turning have to be comparable before "the smallest step" means
+// anything, and they are not: dx is in LDU and dθ in radians, so turning a whole
+// radian costs the same as sliding one LDU. Left alone the solver turns
+// everything, because turning is nearly free — drop a beam, join one end of it
+// to a point, and it swings to reach instead of sliding across.
+//
+// So the unknown is not the angle but the angle times the body's own reach: how
+// far its furthest hole is from the point it turns about. Then a step is
+// measured in how far the part actually moved, whichever way it moved, and the
+// two are the same currency.
+//
+// The penalty on top says turning is dearer than sliding by that factor. It has
+// to be a good deal more than 1, because the smallest step always splits the work
+// between the two in proportion to what each costs: at 3 the beam still comes to
+// rest a tenth turned, which is a tenth you can see. At 20 what is left is under
+// a twentieth of a degree. It costs nothing where turning is genuinely required,
+// because there the constraints say so and a preference does not get a vote.
+const PENALTY = 20;
+const reach = (b) => PENALTY * (b.lever || 1);
+
 // d(place)/dθ, which is all the Jacobian needs that is not a 1 or a 0.
 function turnRate(q, term) {
   const [, , th] = q[term.body];
@@ -61,15 +81,18 @@ const residuals = (q, constraints) => constraints.map((k) => {
 
 const cost = (r) => r.reduce((s, [x, z]) => s + x * x + z * z, 0);
 
-// bodies: [{ c: [x, z] }], the origin each one turns about — its own position in
-// the file. constraints: [{ a, b }] where a term is { body, c, p } and a body of
-// null means the point is nailed to the world.
+// bodies: [{ c: [x, z], lever }], the origin each one turns about — its own
+// position in the file — and how far its furthest hole is from it.
+// constraints: [{ a, b }] where a term is { body, c, p } and a body of null means
+// the point is nailed to the world.
+//
 // The tolerance is on the sum of squares, in LDU², so it stops around a
 // ten-billionth of a stud. Absurd next to a pin hole, but Newton doubles its
 // digits every step, so the last few are two iterations and they keep the
 // reported error meaning "the solver is done" rather than "the solver stopped".
 export function solvePlanar(bodies, constraints, { iters = 80, tol = 1e-20 } = {}) {
   const n = bodies.length * 3;
+  const arm = bodies.map(reach);
   const q = bodies.map(() => [0, 0, 0]);
   let r = residuals(q, constraints), best = cost(r);
   let lambda = 1e-6;
@@ -86,7 +109,8 @@ export function solvePlanar(bodies, constraints, { iters = 80, tol = 1e-20 } = {
           if (term.body === null) continue;
           const base = term.body * 3;
           row.set(base + axis, (row.get(base + axis) ?? 0) + sign);
-          row.set(base + 2, (row.get(base + 2) ?? 0) + sign * turnRate(q, term)[axis]);
+          row.set(base + 2, (row.get(base + 2) ?? 0)
+            + sign * turnRate(q, term)[axis] / arm[term.body]);
         }
         for (const [i, vi] of row) {
           g[i] += vi * r[ci][axis];
@@ -101,7 +125,9 @@ export function solvePlanar(bodies, constraints, { iters = 80, tol = 1e-20 } = {
       const d = gauss(A.map((row) => row.slice()), g.map((v) => -v), n);
       for (let i = 0; i < n; i++) A[i][i] -= lambda;
       if (d) {
-        const trial = q.map((v, i) => [v[0] + d[i * 3], v[1] + d[i * 3 + 1], v[2] + d[i * 3 + 2]]);
+        // The third unknown was the angle times the reach, so it comes back out.
+        const trial = q.map((v, i) =>
+          [v[0] + d[i * 3], v[1] + d[i * 3 + 1], v[2] + d[i * 3 + 2] / arm[i]]);
         const rt = residuals(trial, constraints), ct = cost(rt);
         if (ct < best) {
           q.forEach((v, i) => v.splice(0, 3, ...trial[i]));
