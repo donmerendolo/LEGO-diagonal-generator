@@ -79,12 +79,26 @@ const residuals = (q, constraints) => constraints.map((k) => {
   return [a[0] - b[0], a[1] - b[1]];
 });
 
-const cost = (r) => r.reduce((s, [x, z]) => s + x * x + z * z, 0);
+// A constraint may say how much it matters. Everything the model is actually made
+// of weighs 1; the odd soft one — the pull of a pointer dragging a part about —
+// weighs less, so it can never talk a joint out of closing and only gets a say in
+// what the joints leave undecided.
+const weight = (k) => k.w ?? 1;
+const cost = (r, constraints) =>
+  r.reduce((s, [x, z], i) => s + weight(constraints[i]) ** 2 * (x * x + z * z), 0);
 
-// bodies: [{ c: [x, z], lever }], the origin each one turns about — its own
-// position in the file — and how far its furthest hole is from it.
+// bodies: [{ c: [x, z], lever, fixed, turnOnly }], the point each one turns about
+// and how far its furthest hole is from it.
 // constraints: [{ a, b }] where a term is { body, c, p } and a body of null means
 // the point is nailed to the world.
+//
+// A part held to the frame does not get its held-ness as another equation to be
+// weighed against the rest, because least squares would then trade a tenth of a
+// millimetre of it for a tenth somewhere else, and a part that is nailed down is
+// nailed down. It simply loses the freedom instead: `fixed` has no unknowns at all
+// and cannot move, and `turnOnly` keeps just its angle, turning about `c`, which is
+// then the hole it hangs on rather than its own origin. A freedom that does not
+// exist needs no defending.
 //
 // The tolerance is on the sum of squares, in LDU², so it stops around a
 // ten-billionth of a stud. Absurd next to a pin hole, but Newton doubles its
@@ -94,7 +108,7 @@ export function solvePlanar(bodies, constraints, { iters = 80, tol = 1e-20 } = {
   const n = bodies.length * 3;
   const arm = bodies.map(reach);
   const q = bodies.map(() => [0, 0, 0]);
-  let r = residuals(q, constraints), best = cost(r);
+  let r = residuals(q, constraints), best = cost(r, constraints);
   let lambda = 1e-6;
 
   for (let it = 0; it < iters && best > tol; it++) {
@@ -103,17 +117,20 @@ export function solvePlanar(bodies, constraints, { iters = 80, tol = 1e-20 } = {
     const A = Array.from({ length: n }, () => new Array(n).fill(0));
     const g = new Array(n).fill(0);
     constraints.forEach((k, ci) => {
+      const w = weight(k);
       for (const axis of [0, 1]) {
         const row = new Map();
-        for (const [term, sign] of [[k.a, 1], [k.b, -1]]) {
+        for (const [term, sign] of [[k.a, w], [k.b, -w]]) {
           if (term.body === null) continue;
+          const body = bodies[term.body];
+          if (body.fixed) continue;              // nothing of it left to solve for
           const base = term.body * 3;
-          row.set(base + axis, (row.get(base + axis) ?? 0) + sign);
+          if (!body.turnOnly) row.set(base + axis, (row.get(base + axis) ?? 0) + sign);
           row.set(base + 2, (row.get(base + 2) ?? 0)
             + sign * turnRate(q, term)[axis] / arm[term.body]);
         }
         for (const [i, vi] of row) {
-          g[i] += vi * r[ci][axis];
+          g[i] += vi * w * r[ci][axis];
           for (const [j, vj] of row) A[i][j] += vi * vj;
         }
       }
@@ -128,7 +145,7 @@ export function solvePlanar(bodies, constraints, { iters = 80, tol = 1e-20 } = {
         // The third unknown was the angle times the reach, so it comes back out.
         const trial = q.map((v, i) =>
           [v[0] + d[i * 3], v[1] + d[i * 3 + 1], v[2] + d[i * 3 + 2] / arm[i]]);
-        const rt = residuals(trial, constraints), ct = cost(rt);
+        const rt = residuals(trial, constraints), ct = cost(rt, constraints);
         if (ct < best) {
           q.forEach((v, i) => v.splice(0, 3, ...trial[i]));
           r = rt; best = ct; lambda = Math.max(1e-12, lambda / 3);

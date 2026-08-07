@@ -7,8 +7,9 @@
 // answer without going anywhere near this code.
 
 import { apply, mul, parseModel, rotY } from './ldraw.js';
-import { findLibrary, holesOf } from './library.js';
-import { moved, run } from './diagonal.js';
+import { colourName, describe, findLibrary, holesOf } from './library.js';
+import { run } from './diagonal.js';
+import { moved, readModel, report, solveModel } from './model.js';
 import { solvePlanar } from './solve.js';
 
 const deg = (rad) => rad * 180 / Math.PI;
@@ -130,6 +131,28 @@ if (!root) {
     [...bent].sort().join(' '), '0,0 0,40 40,0');
 }
 
+// The web app reads its holes from a generated table instead of the library on
+// disk. Same model, same answer, or the two front ends have quietly drifted apart
+// and only one of them is right.
+if (root) {
+  const { HOLES, NAMES, COLOURS } = await import('./holes.js');
+  const key = (part) => part.replace(/\.dat$/, '');
+  const table = {
+    holes: (part) => (HOLES[key(part)] ?? [])
+      .map(([x, y, z, axle]) => ({ at: [x, y, z], axle: !!axle })),
+    describe: (part) => NAMES[key(part)] ?? key(part),
+    colourName: (code) => COLOURS[code] ?? `colour ${code}`,
+  };
+  const disk = {
+    holes: (part) => holesOf(root, part),
+    describe: (part) => describe(root, part),
+    colourName: (code) => colourName(root, code),
+  };
+  const text = Deno.readTextFileSync('diagonales.ldr');
+  same('the table of holes answers the same as the library',
+    report(solveModel(text, table), 'x', table), report(solveModel(text, disk), 'x', disk));
+}
+
 // The whole tool, on the model it was written for. Run here rather than read
 // from a file lying about, so the check cannot pass on yesterday's answer.
 if (root) {
@@ -163,6 +186,36 @@ if (root) {
     const again = await solve(twice);
     same(`${from} is already solved once it is solved`, again.text, solved.text);
     Deno.removeSync(twice);
+
+    // A held hole does not move. Not nearly, not to within a hundredth of a
+    // millimetre that the rest of the model talked it into: the same numbers that
+    // went in. It is the one thing in the file the answer is not allowed to touch.
+    if (solved.held.length) {
+      const was = parseModel(Deno.readTextFileSync(from.endsWith('.io') ? 'diagonales.ldr' : from))
+        .filter((l) => l.part === '43093.dat');
+      const now = parseModel(solved.text).filter((l) => l.part === '43093.dat');
+      ok(`${from} never moves a held hole`,
+        Math.max(...now.map((l, i) => Math.hypot(l.t[0] - was[i].t[0], l.t[2] - was[i].t[2]))), 0, 0);
+    }
+
+    // A submodel is one rigid part made of others. What is inside it must come out
+    // byte for byte as it went in: it travels with the line that refers to it, so
+    // moving its contents as well would move them twice — and the only sign would
+    // be a hole a stud from where it should be.
+    // Compared as numbers and not as text, because the writer does not pad its
+    // decimals the way Studio does and 31.67572 is 31.675720.
+    const inside = (text) => {
+      const { blocks, top } = readModel(text);
+      return JSON.stringify([...blocks.values()].filter((b) => b !== top)
+        .flat().filter((l) => l.part).map((l) => [l.part, l.t, l.m]));
+    };
+    if (solved.bodies.some((b) => b.submodel)) {
+      const before = Deno.readTextFileSync(from.endsWith('.io') ? 'diagonales.ldr' : from);
+      same(`${from} leaves the inside of a submodel alone`, inside(solved.text), inside(before));
+      const moved = solved.bodies.filter((b) => b.submodel && b.markers.length);
+      same(`${from} still moves the submodel itself`,
+        moved.length > 0 && moved.every((b) => Math.hypot(...solved.q[b.index]) > 0), true);
+    }
 
     // Which it would also be if every joint had quietly collapsed onto one part:
     // in a solved model both pins of a joint stand in the same place, and both

@@ -55,6 +55,7 @@
   .row { display:flex; align-items:center; gap:6px; margin:6px 0; font-size:13px; }
   .row > span, .row > label { flex:1; }
   input, select { width:80px; padding:4px; border:1px solid var(--line); border-radius:6px; font:inherit; }
+  input[type=checkbox] { width:auto; }
   fieldset { border:0; padding:0; margin:0; }
   fieldset:disabled { opacity:0.4; }
   button.big, label.big { display:block; width:100%; padding:10px; margin:6px 0; font:inherit;
@@ -64,7 +65,17 @@
   .foot .big:first-child { margin-top:0; }
   .foot .big:last-child { margin-bottom:0; }
   #file { display:none; }
+  .hint { display:block; font-size:12px; color:#6d7d8f; text-align:center; }
+  main { position:relative; }
+  #sheet { position:absolute; inset:0; background:#fff; padding:16px 16px 16px 20px;
+           overflow:auto; }
+  #output { margin:0; font:13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            white-space:pre; }
+  #close { position:absolute; top:8px; right:12px; border:0; background:none; cursor:pointer;
+           font:24px/1 system-ui, sans-serif; color:#6d7d8f; padding:4px 8px; }
   #stats { font-size:12px; white-space:pre-wrap; background:#eef2f7; padding:8px; border-radius:8px; }
+  /* The one number that is always worth reading, at a size that says so. */
+  #off { font-size:20px; font-weight:600; }
   .warn { color:#b3261e; }
 </style>
 </head>
@@ -91,6 +102,10 @@
   <div class="foot">
     <label class="big" for="file" data-i18n="open"></label>
     <input type="file" id="file" accept=".ldr,.io,.mpd">
+    <!-- GitHub rather than the file beside this one: served from Pages a .md is raw
+         text, and on GitHub it is a page. -->
+    <a class="hint" data-i18n="howTo" target="_blank" rel="noopener"
+       href="https://github.com/donmerendolo/LEGO-diagonal-generator/blob/main/TUTORIAL.md"></a>
   </div>
 </aside>
 
@@ -104,6 +119,13 @@
     <rect x="-6000" y="-6000" width="12000" height="12000" fill="url(#holes)"/>
     <g id="scene"></g>
   </svg>
+
+  <!-- What opening a model from Studio has to say. Over the board rather than
+       squeezed into a side panel, because a report in columns needs the width. -->
+  <div id="sheet" hidden>
+    <button id="close" title="×">×</button>
+    <pre id="output"></pre>
+  </div>
 </main>
 
 <aside>
@@ -144,10 +166,10 @@
       <button class="big" id="redo" data-i18n="redo" title="Ctrl+Shift+Z"></button>
     </div>
 
-    <div id="result">
-      <h2 data-i18n="result"></h2>
-      <div id="stats"></div>
-    </div>
+    <h2 data-i18n="result"></h2>
+    <div class="row"><span data-i18n="tolerance"></span>
+      <input id="tolerance" type="number" min="0" step="0.01"></div>
+    <div id="stats"></div>
   </div>
 
   <div class="foot">

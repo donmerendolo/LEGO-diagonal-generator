@@ -4,176 +4,29 @@
 // works out where every part has to go for the marked holes to meet, and writes
 // the model back out.
 //
-//   43093  axle pin with friction     this hole stays where it is
-//   3749   axle pin without friction  holes of the same colour must meet
-//
-// The colour of a friction pin means nothing: it is nailed down wherever you put
-// it. One of them leaves the part free to swing about that hole, two hold it
-// still, which is the same thing a real pin does and needs no second idea.
-//
-// Both are axle pins, which is why they snap into pin holes and axle holes
-// alike, so nearly every Technic connection can be marked with one or the other.
+// The work is in model.js, which is the same code the web app runs. All that is
+// here is where the text comes from and where the holes are read: on this side of
+// the fence there is a whole LDraw library on disk, so any part at all can be
+// used, submodels included.
 
-import { apply, MM, mul, parseModel, rotY, STUD, writeModel } from './ldraw.js';
 import { colourName, describe, findLibrary, holesOf } from './library.js';
 import { readStudio } from './io.js';
-import { assignMarkers, leverOf } from './marks.js';
-import { solvePlanar } from './solve.js';
-
-const GROUND = '43093.dat';
-const JOINT = '3749.dat';
-
-const deg = (rad) => rad * 180 / Math.PI;
-const pad = (s, n) => String(s).padEnd(n);
-
-// ---------- reading the model ----------
-
-function build(lines, root) {
-  const bodies = [], markers = [];
-  for (const line of lines) {
-    if (!line.part) continue;
-    if (line.part === GROUND || line.part === JOINT) { markers.push(line); continue; }
-    const holes = holesOf(root, line.part)
-      .map((h) => apply(line.m, line.t, h.at))
-      .map(([x, y, z]) => ({ x, y, z }));
-    bodies.push({
-      line,
-      index: bodies.length,
-      what: describe(root, line.part),
-      holes,
-      c: [line.t[0], line.t[2]],
-      lever: leverOf(holes, { x: line.t[0], z: line.t[2] }),
-      markers: [],
-    });
-  }
-
-  const stray = [], held = [], joints = new Map();
-  const owner = assignMarkers(markers.map((m) => ({
-    x: m.t[0], y: m.t[1], z: m.t[2], group: m.part === GROUND ? null : m.colour,
-  })), bodies);
-
-  markers.forEach((marker, k) => {
-    const body = bodies[owner[k]];
-    if (!body) { stray.push(marker); return; }
-    body.markers.push(marker);
-    const entry = { body, marker, at: { body: body.index, c: body.c, p: [marker.t[0], marker.t[2]] } };
-    if (marker.part === GROUND) { held.push(entry); return; }
-    if (!joints.has(marker.colour)) joints.set(marker.colour, []);
-    joints.get(marker.colour).push(entry);
-  });
-
-  // One pin of a colour has nobody to meet. It is a half-finished thought, not a
-  // constraint, and silently dropping it would leave the model looking solved.
-  for (const [colour, group] of joints)
-    if (group.length < 2) { stray.push(group[0].marker); joints.delete(colour); }
-
-  return { bodies, held, joints, stray };
-}
-
-// ---------- writing it back ----------
-
-function moved(line, turn, slide, c) {
-  const s = Math.sin(turn), co = Math.cos(turn);
-  const ux = line.t[0] - c[0], uz = line.t[2] - c[1];
-  return {
-    ...line,
-    t: [c[0] + ux * co + uz * s + slide[0], line.t[1], c[1] - ux * s + uz * co + slide[1]],
-    // Onto the matrix, not instead of it: a part standing on edge or turned a
-    // quarter keeps every bit of that, and only picks up the extra swing.
-    m: mul(rotY(turn), line.m),
-  };
-}
-
-// ---------- the report ----------
-
-function report(model, out, root) {
-  const { bodies, held, joints, stray, q, error, path } = model;
-  const say = [];
-
-  const many = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
-  say.push(`${path} — ${many(bodies.length, 'part')}, ${many(joints.size, 'joint')}, ${held.length} held`);
-  say.push('');
-  for (const b of bodies) {
-    const [dx, dz, turn] = q[b.index];
-    const how = b.markers.length === 0
-      ? 'nothing marked, left alone'
-      // Where the part's own origin ended up. A part swinging about a pin far
-      // from its origin moves a long way without sliding anywhere, so this is
-      // not slack — it is the tell for a part that flipped to the other way of
-      // assembling the same triangle.
-      : `turns ${deg(turn).toFixed(2)}°, origin moves ${(Math.hypot(dx, dz) / STUD).toFixed(2)} studs`;
-    say.push(`  #${pad(b.index + 1, 3)} ${pad(b.line.part.replace('.dat', ''), 8)} ${pad(b.what, 34)} ${how}`);
-  }
-
-  say.push('');
-  let worst = 0, k = 0;
-  for (const [colour, group] of joints) {
-    const gap = Math.max(...group.slice(1).map(() => error[k++]));
-    worst = Math.max(worst, gap);
-    const parts = group.map((g) => '#' + (g.body.index + 1)).join(' ↔ ');
-    say.push(`  joint ${pad(colourName(root, colour), 16)} ${pad(parts, 16)} ${(gap * MM).toFixed(3)} mm`);
-  }
-  for (const h of held) {
-    const gap = error[k++];
-    worst = Math.max(worst, gap);
-    say.push(`  held  ${pad('#' + (h.body.index + 1), 16)} ${pad('', 16)} ${(gap * MM).toFixed(3)} mm`);
-  }
-
-  const unknowns = bodies.length * 3;
-  const equations = 2 * error.length;
-  say.push('');
-  say.push(`${unknowns} unknowns, ${equations} equations, ` +
-    (unknowns > equations ? `${unknowns - equations} free`
-      : unknowns < equations ? `${equations - unknowns} more than needed`
-        : 'exactly determined'));
-
-  // A pin hole swallows a little, and a beam flexes a little more. Past that it
-  // is not a tight fit, it is a model that does not exist.
-  const mm = worst * MM;
-  say.push(mm < 0.05 ? `Worst error ${mm.toFixed(3)} mm. It closes.`
-    : mm < 0.3 ? `Worst error ${mm.toFixed(3)} mm. It will go together with a bit of flex.`
-      : `Worst error ${mm.toFixed(3)} mm. That does not close — try another hole.`);
-
-  for (const marker of stray)
-    say.push(`WARNING  a marker at ${marker.t.join(' ')} is in no part's hole, ignored`);
-  if (out) say.push(`\nwritten ${out}`);
-  return say.join('\n');
-}
-
-// ---------- the tool ----------
+import { report, solveModel } from './model.js';
 
 const readModel = async (path) => (path.toLowerCase().endsWith('.io')
   ? readStudio(Deno.readFileSync(path))
   : Deno.readTextFileSync(path));
 
-async function run(path, outPath, root) {
-  const lines = parseModel(await readModel(path));
-  const model = build(lines, root);
-  const { bodies, held, joints } = model;
-  if (!bodies.length) throw new Error('no parts in that file');
-
-  // A joint of three markers is three points at one place, so each one after the
-  // first has to meet the one before: two equations apiece, no more.
-  const constraints = [];
-  for (const group of joints.values())
-    for (let i = 1; i < group.length; i++)
-      constraints.push({ a: group[i - 1].at, b: group[i].at });
-  for (const h of held)
-    constraints.push({ a: h.at, b: { body: null, p: h.at.p } });
-  if (!constraints.length) throw new Error('no marker pins in that file: nothing to solve');
-
-  const { q, error } = solvePlanar(bodies, constraints);
-
-  for (const b of bodies) {
-    const [dx, dz, turn] = q[b.index];
-    Object.assign(b.line, moved(b.line, turn, [dx, dz], b.c));
-    // The markers ride along, so the file can go straight back in and be solved
-    // again without putting every pin back by hand.
-    for (const marker of b.markers) Object.assign(marker, moved(marker, turn, [dx, dz], b.c));
-  }
-  Deno.writeTextFileSync(outPath, writeModel(lines).replace(/\s+$/, '') + '\n');
-  console.log(report({ ...model, q, error, path }, outPath, root));
-  return { ...model, q, error, worst: Math.max(0, ...error) };
+export async function run(path, outPath, root) {
+  const library = {
+    holes: (part) => holesOf(root, part),
+    describe: (part) => describe(root, part),
+    colourName: (code) => colourName(root, code),
+  };
+  const res = solveModel(await readModel(path), library);
+  Deno.writeTextFileSync(outPath, res.text);
+  console.log(report(res, path, library) + `\n\nwritten ${outPath}`);
+  return res;
 }
 
 if (import.meta.main) {
@@ -190,5 +43,3 @@ if (import.meta.main) {
   }
   await run(args[0], flag('out') ?? args[0].replace(/\.[^.]+$/, '') + '-solved.ldr', root);
 }
-
-export { build, moved, run };

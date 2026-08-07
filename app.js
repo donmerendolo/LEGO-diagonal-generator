@@ -5,9 +5,9 @@
 // wrong.
 
 import { CATALOGUE } from './parts.js';
-import { formatLine, MM, mul, parseModel, rotY, STUD } from './ldraw.js';
+import { formatLine, MM, mul, rotY, STUD } from './ldraw.js';
 import { readStudio } from './io.js';
-import { assignMarkers, leverOf } from './marks.js';
+import { leverOf } from './marks.js';
 import { solvePlanar } from './solve.js';
 import { applyLanguage, lang, setLang, t } from './i18n.js';
 
@@ -27,14 +27,15 @@ const PIN = { joint: '3749.dat', ground: '43093.dat' };
 const PIN_BASE = [0, -1, 0, 1, 0, 0, 0, 0, 1];
 
 const state = {
-  parts: [],        // { spec, x, z, turn, level }
+  parts: [],        // { spec, x, z, turn, level, flip }
   joints: [],       // { a: {part, hole}, b: {part, hole} }
   holds: [],        // { part, hole, anchor: [x, z] }
   tool: 'join',
   armed: null,      // the first hole of a join not finished yet
   snap: 'stud',
+  // Kept between visits, because it is a judgement you make once and then rely on.
+  tolerance: +(localStorage.getItem('tolerance') ?? 0.1),
   selected: null,
-  message: '',
   result: null,
 };
 const view = { x: -400, y: -300, w: 800, h: 600 };
@@ -48,19 +49,27 @@ const holdsOn = (part) => state.holds.filter((h) => h.part === part);
 // ---------- geometry ----------
 
 // Turning about Y, seen from above: the same rotation the solver works in.
+//
+// A bent beam is not the same shape as its mirror image, and no amount of turning
+// makes it one — you have to pick the piece up and put it back the other way round.
+// That is a half turn about the part's own long axis, which is a real thing to do to
+// a real part, and from above it reads as the shape mirrored: z for -z.
 const holeAt = (p, i) => {
-  const [hx, hz] = p.spec.holes[i].at;
+  const [hx, hz0] = p.spec.holes[i].at;
+  const hz = p.flip ? -hz0 : hz0;
   const c = Math.cos(p.turn), s = Math.sin(p.turn);
   return [p.x + hx * c + hz * s, p.z - hx * s + hz * c];
 };
 
-// A part's reach never changes, so it is worked out once from the catalogue.
-const levers = new Map();
-function leverFor(spec) {
-  if (!levers.has(spec.part))
-    levers.set(spec.part, leverOf(spec.holes.map((h) => ({ x: h.at[0], z: h.at[1] })), { x: 0, z: 0 }));
-  return levers.get(spec.part);
-}
+// Y flipped as well as Z, because turning a part over does both. Multiplied onto
+// the turn the way every other matrix here is.
+const FLIPPED = [1, 0, 0, 0, -1, 0, 0, 0, -1];
+
+// How far the part's furthest hole is from the point it turns about — which is its
+// own origin most of the time, and the pin it is held by when it has one.
+const leverFor = (p, centre) => leverOf(
+  p.spec.holes.map((_, i) => { const [x, z] = holeAt(p, i); return { x, z }; }),
+  { x: centre[0], z: centre[1] });
 
 // ---------- snapping ----------
 //
@@ -74,7 +83,7 @@ function leverFor(spec) {
 // have the last word, and quantising the answer is precisely the wrong thing: the
 // angles this tool exists to find are not round numbers.
 const STEP = { stud: STUD, half: STUD / 2, free: 0 };
-const TURNS = 24;                       // fifteen degrees
+const TURNS = 72;                       // five degrees
 
 const loose = (ev) => ev.altKey || !STEP[state.snap];
 const snapTo = (v, step) => Math.round(v / step) * step;
@@ -139,7 +148,8 @@ function render() {
 
   for (const [i, p] of state.parts.entries()) {
     const deg = -p.turn * 180 / Math.PI;
-    svg += `<g data-p="${i}" style="cursor:grab" transform="translate(${p.x},${p.z}) rotate(${deg})">
+    svg += `<g data-p="${i}" style="cursor:grab" transform="translate(${p.x},${p.z})
+              rotate(${deg})${p.flip ? ' scale(1,-1)' : ''}">
       ${beam(p.spec, i === state.selected ? '#2e7de9' : '#5d6b7c', '#fff')}`;
     p.spec.holes.forEach(({ at: [x, z], axle }, h) => {
       const joint = jointAt(i, h);
@@ -156,17 +166,31 @@ function render() {
 
   // The handle turns the part about whatever it is pinned to, so that is where it
   // hangs from. A part held at two holes cannot turn at all, and is given none.
+  //
+  // The arrow beyond it turns the part over, and lies across the handle because that
+  // is the line it flips the part about — pointing both ways, because it goes back
+  // the same way it came. It rides on the handle's arm so it stays the same gesture
+  // wherever the part has got to.
   const p = state.parts[state.selected];
   if (p) {
     const held = holdsOn(state.selected);
+    const c = held.length === 1 ? held[0].anchor : [p.x, p.z];
+    const along = (d) => [c[0] + d * Math.cos(p.turn), c[1] - d * Math.sin(p.turn)];
     if (held.length < 2) {
-      const c = held.length === 1 ? held[0].anchor : [p.x, p.z];
-      const at = [c[0] + 80 * Math.cos(p.turn), c[1] - 80 * Math.sin(p.turn)];
+      const at = along(80);
       svg += `<line x1="${c[0]}" y1="${c[1]}" x2="${at[0]}" y2="${at[1]}"
                 stroke="#2e7de9" stroke-width="2"/>
               <circle data-rot="${state.selected}" cx="${at[0]}" cy="${at[1]}" r="9" fill="#fff"
                 stroke="#2e7de9" stroke-width="3" style="cursor:grab"/>`;
     }
+    const turned = along(held.length < 2 ? 112 : 80);
+    svg += `<g data-flip="${state.selected}" style="cursor:pointer"
+              transform="translate(${turned[0]},${turned[1]}) rotate(${-p.turn * 180 / Math.PI})">
+              <title>${t('flip')}</title>
+              <path d="M0,-15 L0,15 M-6,-9 L0,-15 L6,-9 M-6,9 L0,15 L6,9" fill="none"
+                stroke="#2e7de9" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle r="17" fill="transparent"/>
+            </g>`;
   }
 
   scene.innerHTML = svg;
@@ -195,25 +219,27 @@ function renderPanels() {
     $('i-angle').value = +(p.turn * 180 / Math.PI).toFixed(1);
     $('i-level').value = p.level;
   }
-  const said = statsHTML();
-  $('stats').innerHTML = said;
-  $('result').hidden = !said;
+  $('tolerance').value = state.tolerance;
+  $('stats').innerHTML = statsHTML();
 }
 
 // Silent when there is nothing wrong. A panel that says "6 unknowns, 6
 // equations, it closes" after every move is a panel nobody reads, and then the
 // one time it says something that matters it is not read either.
+// How far the worst joint is from closing is the one number worth a permanent
+// place, so it has one and it is legible from across the room.
+//
+// Whether that number is bad is not something this can know: a pin hole swallows a
+// little and a beam flexes a little more, and how much is a matter of what you have
+// got away with before. So the line where it turns red is yours to move.
 function statsHTML() {
-  const lines = state.message ? state.message.split('\n') : [];
-  if (state.joints.length && !state.holds.length) lines.push(t('loose'));
-  if (state.joints.length > JOINTS.length) lines.push(t('tooMany', { n: JOINTS.length }));
-
-  // A pin hole swallows a little and a beam flexes a little more. Past that it is
-  // not a tight fit, it is a model that does not exist.
   const mm = Math.max(0, ...(state.result?.error ?? [])) * MM;
-  if (mm >= 0.05) lines.push(t(mm < 0.3 ? 'flex' : 'fails', { n: mm.toFixed(3) }));
+  const said = [`<div id="off" class="${mm > state.tolerance ? 'warn' : ''}">` +
+                `${t('offBy', { n: mm.toFixed(3) })}</div>`];
 
-  return lines.map((line) => `<b class="warn">${line}</b>`).join('\n');
+  if (state.joints.length && !state.holds.length) said.push(t('loose'));
+  if (state.joints.length > JOINTS.length) said.push(t('tooMany', { n: JOINTS.length }));
+  return said[0] + said.slice(1).map((line) => `\n<b class="warn">${line}</b>`).join('');
 }
 
 // ---------- working it out ----------
@@ -222,39 +248,55 @@ function statsHTML() {
 // than a sketch waiting for a button to be pressed.
 function recompute() {
   const parts = state.parts;
-  const bodies = parts.map((p) => ({ c: [p.x, p.z], lever: leverFor(p.spec) }));
+  const bodies = parts.map((p) => ({ c: [p.x, p.z], lever: leverFor(p, [p.x, p.z]) }));
   const term = (e) => ({ body: e.part, c: bodies[e.part].c, p: holeAt(parts[e.part], e.hole) });
+
+  // A part being placed rather than pulled is not solved for at all: it is already
+  // exactly where you put it, and the rest of the model is what has to give.
+  if (state.drag && !state.drag.to) bodies[state.drag.part].fixed = true;
+
+  // Being held is not a constraint the solver weighs against the others either, it
+  // is a freedom the part does not have: one pin leaves it its angle and nothing
+  // else, about that pin rather than about its own origin, and two leave it nothing
+  // at all. Its pins let go only while it is the one being dragged.
+  for (const h of state.holds) {
+    if (h.part === state.drag?.part) continue;
+    const b = bodies[h.part];
+    if (b.held) { b.held = 2; b.fixed = true; b.turnOnly = false; continue; }
+    b.held = 1;
+    b.turnOnly = true;
+    b.c = [...h.anchor];
+    b.lever = leverFor(parts[h.part], h.anchor);
+  }
 
   const constraints = state.joints.map((j) => ({ a: term(j.a), b: term(j.b) }));
 
-  // A held hole meets its anchor: the place it was standing when you marked it,
-  // remembered once. Pinning it afresh to wherever it has got to would hold
-  // nothing at all. While its part is being dragged it lets go, and is set down
-  // again where the part lands.
-  for (const h of state.holds)
-    if (h.part !== state.drag?.part)
-      constraints.push({ a: term(h), b: { body: null, p: h.anchor } });
-
-  if (state.drag) {
-    const i = state.drag.part, c = bodies[i].c, to = state.drag.to;
-    constraints.push({ a: { body: i, c, p: c }, b: { body: null, p: to } });
-    // Held at two holes, a part is part of the frame, and dragging it should
-    // carry it about without turning it. Two points asked to move by the same
-    // amount say exactly that, in the only language the solver has.
-    if (state.drag.rigid) {
-      const L = bodies[i].lever;
-      const off = [L * Math.cos(parts[i].turn), -L * Math.sin(parts[i].turn)];
-      constraints.push({
-        a: { body: i, c, p: [c[0] + off[0], c[1] + off[1]] },
-        b: { body: null, p: [to[0] + off[0], to[1] + off[1]] },
-      });
-    }
+  // Weighed at a five-hundredth of a joint, which is what makes dragging a link
+  // drive the mechanism instead of pulling it apart. It can be this faint without
+  // going numb: in the directions the joints leave free there is nothing to push
+  // back, so the weight cancels out and the part follows all the same. All the
+  // weight decides is how much error in a joint the pointer is allowed to buy, and
+  // the answer to that should be as near none as it can be.
+  if (state.drag?.to) {
+    const c = bodies[state.drag.part].c;
+    constraints.push({ a: { body: state.drag.part, c, p: c },
+                       b: { body: null, p: state.drag.to }, w: 0.002 });
   }
 
   if (constraints.length) {
     const { q } = solvePlanar(bodies, constraints);
-    parts.forEach((p, i) => { p.x += q[i][0]; p.z += q[i][1]; p.turn += q[i][2]; });
+    // A part held by one pin turns about that pin, not about its own origin, so
+    // that is the centre the answer has to be applied around too.
+    parts.forEach((p, i) => {
+      const [dx, dz, turn] = q[i];
+      const c = bodies[i].c, s = Math.sin(turn), co = Math.cos(turn);
+      const ux = p.x - c[0], uz = p.z - c[1];
+      p.x = c[0] + ux * co + uz * s + dx;
+      p.z = c[1] - ux * s + uz * co + dz;
+      p.turn += turn;
+    });
   }
+
 
   // Measured on the answer and off the drag: what the panel says has to be about
   // what you asked for, not about where your finger is.
@@ -335,6 +377,97 @@ function useTool(part, hole) {
   state.armed = null;
 }
 
+// ---------- turning ----------
+
+// Turning follows the pointer from wherever it was taken hold of: the part swings
+// by however far the pointer has gone round since, not round to meet it. Grab the
+// middle of a beam and it does not leap a quarter turn first.
+const bearing = (c, at) => -Math.atan2(at[1] - c[1], at[0] - c[0]);
+const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+const centreOf = (g) => (g.pivot ? g.pivot.anchor
+  : [state.parts[g.part].x, state.parts[g.part].z]);
+
+function grip(part, pivot, at) {
+  const g = { part, pivot };
+  g.was = state.parts[part].turn;
+  g.from = bearing(centreOf(g), at);
+  return g;
+}
+
+// Carrying a part about. Which of two quite different things that is depends on
+// whether the part is pinned to the frame:
+//
+// Pinned, you are moving the frame itself, so it goes exactly where you put it and
+// every pin on it moves by the very same amount — two pins on one part cannot drift
+// apart or turn against each other, whatever the rest of the model is doing.
+//
+// Not pinned, it is a link in a mechanism, so it is *pulled* rather than placed and
+// the joints have the last word. It turns when turning is what it takes to stay
+// joined, and it stops when the linkage stops, instead of tearing away from what it
+// is joined to and leaving the model in a state it could never be built in.
+function carry(g, at, ev) {
+  const p = state.parts[g.part];
+  const raw = [at[0] - g.from[0], at[1] - g.from[1]];
+  // With pins in it, the *travel* is what snaps and not the position: an anchor
+  // that started on a grid point is on one afterwards, and one that never was —
+  // because its hole does not sit on the grid — keeps exactly the offset it had
+  // instead of being dragged onto a line it does not belong on.
+  const shift = g.held.length
+    ? snapPoint(raw, ev)
+    : snapPoint([g.was[0] + raw[0], g.was[1] + raw[1]], ev).map((v, k) => v - g.was[k]);
+  const to = [g.was[0] + shift[0], g.was[1] + shift[1]];
+
+  if (g.held.length) {
+    p.x = to[0];
+    p.z = to[1];
+    g.held.forEach((h, i) => { h.anchor = [g.anchors[i][0] + shift[0], g.anchors[i][1] + shift[1]]; });
+    state.drag = { part: g.part };
+  } else {
+    state.drag = { part: g.part, to };
+  }
+  recompute();
+}
+
+// Turned over about the line the arrow is drawn on, which is the one through the
+// point the part turns about. Mirroring in the part's own frame flips it about a
+// line through its origin, so the part is then slid back until that point is where
+// it was — the two together being a mirror about the line that runs through it.
+//
+// Which is the intuitive line, and it pays for itself: a part hanging on one pin is
+// flipped about that very pin, so the pin does not move at all. Nothing has to be
+// done to keep a joint to the frame where it was, because nothing moved it.
+function flipPart(i) {
+  remember();
+  const p = state.parts[i];
+  const pivot = holdsOn(i).length === 1 ? holdsOn(i)[0] : null;
+  p.flip = !p.flip;
+  if (pivot) {
+    const now = holeAt(p, pivot.hole);
+    p.x += pivot.anchor[0] - now[0];
+    p.z += pivot.anchor[1] - now[1];
+  }
+  // Any other pins on it have moved with their holes, and go where the holes went.
+  for (const h of state.holds) if (h.part === i) h.anchor = holeAt(p, h.hole);
+  recompute();
+}
+
+function turnBy(g, at, ev) {
+  const p = state.parts[g.part];
+  p.turn = snapTurn(g.was + wrap(bearing(centreOf(g), at) - g.from), ev);
+  // Held still for the solver the same way a dragged part is: you are turning it,
+  // so it goes where you turn it and the rest of the model follows.
+  state.drag = { part: g.part };
+  // The pin stays where it is, so the part is put back on it. Done here and not
+  // left to Newton, which would drag it back afterwards and make the way there a
+  // wander rather than a swing.
+  if (g.pivot) {
+    const now = holeAt(p, g.pivot.hole);
+    p.x += g.pivot.anchor[0] - now[0];
+    p.z += g.pivot.anchor[1] - now[1];
+  }
+  recompute();
+}
+
 // ---------- pointer ----------
 
 function atPointer(ev) {
@@ -358,10 +491,17 @@ board.addEventListener('pointerdown', (ev) => {
     board.classList.add('panning');
     return;
   }
+  const flip = ev.target.closest('[data-flip]');
   const rot = ev.target.closest('[data-rot]');
   const spot = ev.target.closest('[data-h]');
   const part = ev.target.closest('[data-p]');
-  if (rot) { remember(); pending = { turning: +rot.dataset.rot }; return; }
+  if (flip) { flipPart(+flip.dataset.flip); return; }
+  if (rot) {
+    remember();
+    const part = +rot.dataset.rot, held = holdsOn(part);
+    pending = { turning: grip(part, held.length === 1 ? held[0] : null, atPointer(ev)) };
+    return;
+  }
   if (!part) { state.selected = null; state.armed = null; render(); return; }
   // A hole covers most of a beam, so which one you meant is only known once you
   // either move or let go: a drag is a drag, a tap on a hole is a mark.
@@ -381,51 +521,37 @@ globalThis.addEventListener('pointermove', (ev) => {
   if (!pending) return;
   const at = atPointer(ev);
 
-  if (pending.turning !== undefined) {
-    const p = state.parts[pending.turning];
-    const held = holdsOn(pending.turning);
-    // Turned about the hole it is pinned to, here and now, rather than about its
-    // own origin with Newton left to drag the pin back afterwards. Same finish,
-    // but the way there is a part swinging on its pin instead of wandering.
-    const centre = held.length === 1 ? held[0].anchor : [p.x, p.z];
-    p.turn = snapTurn(-Math.atan2(at[1] - centre[1], at[0] - centre[0]), ev);
-    if (held.length === 1) {
-      const now = holeAt(p, held[0].hole);
-      p.x += held[0].anchor[0] - now[0];
-      p.z += held[0].anchor[1] - now[1];
+  // Taking hold of the handle is already the whole gesture; taking hold of a part is
+  // only a gesture once it has gone somewhere, or every click on a hole would count
+  // as a drag of nothing.
+  if (!pending.turning) {
+    if (!pending.moved && Math.hypot(at[0] - pending.from[0], at[1] - pending.from[1]) < 6) return;
+    if (!pending.moved) {
+      pending.moved = true;
+      remember();
+      state.selected = pending.part;
+      state.armed = null;
+      // What a drag means is decided once, here, by what the part is pinned to —
+      // because that is what decides what it is able to do at all.
+      const held = holdsOn(pending.part);
+      if (held.length === 1) pending.turning = grip(pending.part, held[0], pending.from);
+      else {
+        const p = state.parts[pending.part];
+        pending.was = [p.x, p.z];
+        pending.held = held;
+        pending.anchors = held.map((h) => [...h.anchor]);
+      }
     }
-    recompute();
-    return;
   }
-
-  if (!pending.moved && Math.hypot(at[0] - pending.from[0], at[1] - pending.from[1]) < 6) return;
-  if (!pending.moved) {
-    pending.moved = true;
-    remember();
-    state.selected = pending.part;
-    state.armed = null;
-    const p = state.parts[pending.part];
-    pending.was = [p.x, p.z];
-    pending.rigid = holdsOn(pending.part).length >= 2;
-  }
-  const shift = [at[0] - pending.from[0], at[1] - pending.from[1]];
-  // A part that is only being carried has its *travel* snapped, not its position:
-  // two anchors that started on the grid are still on the grid afterwards. A part
-  // free to turn has no such promise to keep, so its origin is what snaps.
-  state.drag = {
-    part: pending.part, rigid: pending.rigid,
-    to: pending.rigid
-      ? snapPoint(shift, ev).map((v, k) => pending.was[k] + v)
-      : snapPoint([pending.was[0] + shift[0], pending.was[1] + shift[1]], ev),
-  };
-  recompute();
+  if (pending.turning) turnBy(pending.turning, at, ev);
+  else carry(pending, at, ev);
 });
 
 globalThis.addEventListener('pointerup', () => {
   // Cleared before anything else is done with them. Whatever goes wrong below,
   // the gesture is over — the alternative is a part that carries on turning after
   // the button is up, because an error on the way out skipped the tidying.
-  const was = pending, dragged = state.drag;
+  const was = pending;
   pending = null;
   state.drag = null;
 
@@ -434,10 +560,6 @@ globalThis.addEventListener('pointerup', () => {
     state.selected = was.part;
     if (was.hole !== null) useTool(was.part, was.hole);
   }
-  // Whatever is held on the part just dragged is held where it now stands.
-  if (dragged)
-    for (const h of state.holds)
-      if (h.part === dragged.part) h.anchor = holeAt(state.parts[h.part], h.hole);
   recompute();
 });
 
@@ -483,7 +605,7 @@ $('partPick').addEventListener('click', (ev) => {
   const n = state.parts.length;
   const [x, z] = snapPoint([view.x + view.w / 2 + (n % 5) * 30,
                             view.y + view.h / 2 + (n % 5) * 30], {});
-  state.parts.push({ spec: CATALOGUE[+b.dataset.spec], level: 0, turn: 0, x, z });
+  state.parts.push({ spec: CATALOGUE[+b.dataset.spec], level: 0, turn: 0, flip: false, x, z });
   state.selected = state.parts.length - 1;
   recompute();
 });
@@ -531,92 +653,70 @@ $('i-level').addEventListener('input', () => {
   render();
 });
 $('snap').onchange = () => { state.snap = $('snap').value; render(); };
+$('tolerance').addEventListener('input', () => {
+  state.tolerance = Math.max(0, +$('tolerance').value || 0);
+  localStorage.setItem('tolerance', state.tolerance);
+  render();
+});
 $('undo').onclick = () => step(past, future);
 $('redo').onclick = () => step(future, past);
 $('reset').onclick = () => {
   remember();
   state.parts = []; state.joints = []; state.holds = [];
   state.selected = state.armed = null;
-  state.message = '';
   recompute();
 };
 
-// ---------- in ----------
+// ---------- solving a model from Studio ----------
+//
+// Not the board: this is the command line tool, for anyone who would rather not
+// clone a repository. The same model.js runs, so any part at all can be used and
+// submodels work — the only difference is where the holes are read. There is no
+// LDraw library in a browser, so it carries a table of every hole in it instead,
+// fetched only when somebody actually opens a file.
+//
+// What comes back is a solved .ldr and the report, which is the whole output. The
+// board is left alone: a model built in Studio is not a sketch to be redrawn here.
+let library = null;
 
-// Opening a model does here what the command line tool does, with one limit it
-// cannot get around: there is no LDraw library in a browser, so it only knows the
-// parts in the palette. Anything else is named and left out rather than guessed
-// at, and a part turned any way but about Y is not in this plane at all.
-const isY = (m) => [m[1], m[3], m[5], m[7]].every((v) => Math.abs(v) < 1e-4)
-  && Math.abs(Math.abs(m[4]) - 1) < 1e-4;
-
-function open(text) {
-  const parts = [], markers = [], lost = new Set();
-  for (const line of parseModel(text)) {
-    if (!line.part) continue;
-    if (line.part === PIN.joint || line.part === PIN.ground) { markers.push(line); continue; }
-    const spec = CATALOGUE.find((s) => s.part === line.part);
-    if (!spec || !isY(line.m)) { lost.add(line.part.replace('.dat', '')); continue; }
-    parts.push({ spec, x: line.t[0], z: line.t[2], level: Math.round(-line.t[1] / STUD),
-                 turn: Math.atan2(line.m[2], line.m[0]) });
+async function ldrawTable() {
+  if (!library) {
+    const { HOLES, NAMES, COLOURS } = await import('./holes.js');
+    const key = (part) => part.replace(/\.dat$/, '');
+    library = {
+      holes: (part) => (HOLES[key(part)] ?? [])
+        .map(([x, y, z, axle]) => ({ at: [x, y, z], axle: !!axle })),
+      describe: (part) => NAMES[key(part)] ?? key(part),
+      colourName: (code) => COLOURS[code] ?? `colour ${code}`,
+    };
   }
-  if (!parts.length) throw new Error(t('nothingKnown'));
-
-  const owner = assignMarkers(
-    markers.map((m) => ({ x: m.t[0], y: m.t[1], z: m.t[2],
-                          group: m.part === PIN.ground ? null : m.colour })),
-    parts.map((p) => ({ holes: p.spec.holes.map((h, i) => {
-      const [x, z] = holeAt(p, i);
-      return { x, y: -STUD * p.level, z };
-    }) })));
-
-  const holds = [], groups = new Map();
-  let stray = 0;
-  markers.forEach((marker, k) => {
-    const part = owner[k];
-    // A pin whose part was left out has nothing to be snapped into any more. It is
-    // its own kind of trouble, not a missing part, and saying so as one confuses
-    // a marker pin with a beam.
-    if (part === null) { stray++; return; }
-    const hole = nearestHole(parts[part], [marker.t[0], marker.t[2]]);
-    if (marker.part === PIN.ground) { holds.push({ part, hole, anchor: holeAt(parts[part], hole) }); return; }
-    if (!groups.has(marker.colour)) groups.set(marker.colour, []);
-    groups.get(marker.colour).push({ part, hole });
-  });
-
-  // A colour with three pins in it is two joints, the same way three parts meeting
-  // at a point is two joints. A colour with one is half a thought, and dropped.
-  const joints = [];
-  for (const group of groups.values())
-    for (let i = 1; i < group.length; i++) joints.push({ a: group[i - 1], b: group[i] });
-
-  remember();
-  state.parts = parts; state.joints = joints; state.holds = holds;
-  state.selected = state.armed = null;
-  state.message = [
-    lost.size ? t('leftOut', { n: [...lost].sort().join(', ') }) : '',
-    stray ? t('strayPins', { n: stray }) : '',
-  ].filter(Boolean).join('\n');
-  recompute();
+  return library;
 }
-
-const nearestHole = (p, at) => p.spec.holes
-  .map((_, i) => i)
-  .reduce((best, i) => (gap(holeAt(p, i), at) < gap(holeAt(p, best), at) ? i : best), 0);
 
 $('file').addEventListener('change', async (ev) => {
   const file = ev.target.files[0];
   ev.target.value = '';                        // so the same file can be opened twice
   if (!file) return;
+  $('output').textContent = t('working');
+  $('sheet').hidden = false;
   try {
-    open(/\.io$/i.test(file.name)
+    const text = /\.io$/i.test(file.name)
       ? await readStudio(new Uint8Array(await file.arrayBuffer()))
-      : await file.text());
+      : await file.text();
+    const { report, solveModel } = await import('./model.js');
+    const lib = await ldrawTable();
+    const res = solveModel(text, lib);
+    $('output').textContent = report(res, file.name, lib);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([res.text], { type: 'text/plain' }));
+    a.download = file.name.replace(/\.[^.]+$/, '') + '-solved.ldr';
+    a.click();
   } catch (err) {
-    state.message = String(err.message ?? err);
-    render();
+    $('output').textContent = String(err.message ?? err);
   }
 });
+
+$('close').onclick = () => { $('sheet').hidden = true; };
 
 // ---------- out ----------
 
@@ -625,8 +725,9 @@ $('file').addEventListener('change', async (ev) => {
 function toLDR() {
   const out = ['0 FILE diagonals.ldr', '0 Made with LEGO diagonal generator', '0 Name: diagonals.ldr'];
   const y = (p) => -STUD * p.level;
+  const sits = (p) => (p.flip ? mul(rotY(p.turn), FLIPPED) : rotY(p.turn));
   for (const p of state.parts)
-    out.push(formatLine({ colour: 71, t: [p.x, y(p), p.z], m: rotY(p.turn), part: p.spec.part }));
+    out.push(formatLine({ colour: 71, t: [p.x, y(p), p.z], m: sits(p), part: p.spec.part }));
 
   const pin = (e, colour, part) => {
     const p = state.parts[e.part];
