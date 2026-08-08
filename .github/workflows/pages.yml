@@ -1,0 +1,62 @@
+# Publishes the board to GitHub Pages on every push to main, but only if the
+# maths still checks out. Turn it on once under Settings → Pages by setting
+# Source to "GitHub Actions".
+#
+# There is nothing to build: the site is the files themselves. They are copied
+# into _site rather than published from the root so that what goes public is a
+# list you can read, and .git and the LDraw download cache stay out of it.
+
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time, and a running one is left to finish: cancelling it
+# would leave the published site half swapped over.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      # There is no LDraw library on the runner, so the checks that need one skip
+      # themselves. What is left is the maths and the generated table of holes,
+      # which is exactly what the browser has to work with anyway.
+      - run: deno run -A test.js
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.pages.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      # Named one by one rather than *.js: diagonal.js and library.js are the
+      # command line's, they read the disk and would never run in a browser.
+      # holes.js and model.js are fetched only when a file is dropped on Solve.
+      - run: |
+          mkdir _site
+          cp index.html app.js holes.js i18n.js io.js ldraw.js marks.js \
+             model.js parts.js solve.js _site/
+          cp -r img _site/
+      - uses: actions/upload-pages-artifact@v3
+      - id: pages
+        uses: actions/deploy-pages@v4
+

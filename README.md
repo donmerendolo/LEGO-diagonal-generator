@@ -49,12 +49,6 @@ deno run -A tools/pictures.js   # img/*.png — the palette's pictures
 deno run -A tools/holes.js      # holes.js — every hole in the library, for the browser
 ```
 
-`holes.js` is what lets the web app do the command line tool's job: there is no LDraw
-library in a browser, so it carries the answers instead. 1831 parts, 10366 holes,
-25 kB over the wire, fetched only when someone opens a file. Both front ends run the
-same `model.js`, and a test solves the same model through both libraries and demands
-the report come out identical.
-
 ## License
 
 The code is [GPL-3.0](LICENSE.md).

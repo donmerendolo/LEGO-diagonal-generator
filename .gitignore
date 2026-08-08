@@ -2,3 +2,6 @@
 *.ldr
 *.io
 
+# Except the one the tests solve, which has to travel with them.
+!diagonal-test.ldr
+

@@ -132,17 +132,33 @@ if (!root) {
 }
 
 // The web app reads its holes from a generated table instead of the library on
-// disk. Same model, same answer, or the two front ends have quietly drifted apart
-// and only one of them is right.
+// disk. The table is the whole of what the browser has, so it has to be enough on
+// its own — which is also the only thing left to check on a machine with no LDraw
+// library, such as the one that publishes the site.
+const { HOLES, NAMES, COLOURS } = await import('./holes.js');
+const key = (part) => part.replace(/\.dat$/, '');
+const table = {
+  holes: (part) => (HOLES[key(part)] ?? [])
+    .map(([x, y, z, axle]) => ({ at: [x, y, z], axle: !!axle })),
+  describe: (part) => NAMES[key(part)] ?? key(part),
+  colourName: (code) => COLOURS[code] ?? `colour ${code}`,
+};
+
+// diagonal-test.ldr is the one model kept in the repo, so this much runs on a
+// bare checkout. Nothing here knows what is in it beyond that it has joints to
+// close, which is what lets it be redrawn in Studio without touching the test.
+{
+  const solved = solveModel(Deno.readTextFileSync('diagonal-test.ldr'), table);
+  ok('the table alone closes the test model', solved.worst, 0, 1e-9);
+  same('having found joints to close', solved.joints.size > 0, true);
+  same('and left no pin without a partner', solved.stray.length, 0);
+  same('and its answer is already solved',
+    solveModel(solved.text, table).text === solved.text, true);
+}
+
+// Same model, same answer, or the two front ends have quietly drifted apart and
+// only one of them is right.
 if (root) {
-  const { HOLES, NAMES, COLOURS } = await import('./holes.js');
-  const key = (part) => part.replace(/\.dat$/, '');
-  const table = {
-    holes: (part) => (HOLES[key(part)] ?? [])
-      .map(([x, y, z, axle]) => ({ at: [x, y, z], axle: !!axle })),
-    describe: (part) => NAMES[key(part)] ?? key(part),
-    colourName: (code) => COLOURS[code] ?? `colour ${code}`,
-  };
   const disk = {
     holes: (part) => holesOf(root, part),
     describe: (part) => describe(root, part),
