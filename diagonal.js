@@ -11,7 +11,7 @@
 
 import { colourName, describe, findLibrary, holesOf } from './library.js';
 import { readStudio } from './io.js';
-import { report, solveModel } from './model.js';
+import { report, solveModel, withoutMarks } from './model.js';
 
 const readModel = async (path) => (path.toLowerCase().endsWith('.io')
   ? readStudio(Deno.readFileSync(path))
@@ -24,7 +24,7 @@ export async function run(path, outPath, root) {
     colourName: (code) => colourName(root, code),
   };
   const res = solveModel(await readModel(path), library);
-  Deno.writeTextFileSync(outPath, res.text);
+  Deno.writeTextFileSync(outPath, withoutMarks(res.text));
   console.log(report(res, path, library) + `\n\nwritten ${outPath}`);
   return res;
 }

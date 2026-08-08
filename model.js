@@ -152,6 +152,20 @@ export function solveModel(text, library) {
            text: writeModel(lines).replace(/\s+$/, '') + '\n' };
 }
 
+// The marks are scaffolding. They said which hole had to meet which, and once the
+// holes have met there is nothing left for them to say — so the file you build
+// from does not carry them. Top level only: inside a submodel a pin is a part of
+// the build like any other, and the answer never touched it.
+//
+// Kept apart from solveModel because it is not part of solving: what comes out of
+// there is still marked, which is what lets the answer be checked against the
+// marks that asked for it.
+export function withoutMarks(text) {
+  const { lines, top } = readModel(text);
+  const marks = new Set(top.filter((l) => l.part === FIXED || l.part === JOINT));
+  return writeModel(lines.filter((l) => !marks.has(l))).replace(/\s+$/, '') + '\n';
+}
+
 // ---------- saying what happened ----------
 
 const MM = 0.4;                         // one LDU, in millimetres

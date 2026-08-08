@@ -9,10 +9,11 @@
 import { apply, mul, parseModel, rotY } from './ldraw.js';
 import { colourName, describe, findLibrary, holesOf } from './library.js';
 import { run } from './diagonal.js';
-import { FIXED, moved, readModel, report, solveModel } from './model.js';
+import { FIXED, JOINT, moved, readModel, report, solveModel, withoutMarks } from './model.js';
 import { solvePlanar } from './solve.js';
 
 const deg = (rad) => rad * 180 / Math.PI;
+const marked = (text) => parseModel(text).filter((l) => l.part === JOINT || l.part === FIXED);
 const ok = (name, got, want, tol) => {
   if (!(Math.abs(got - want) <= tol)) throw new Error(`${name}: ${got} != ${want}`);
   console.log(`ok  ${name} = ${got.toFixed(6)}`);
@@ -154,6 +155,10 @@ const table = {
   same('and left no pin without a partner', solved.stray.length, 0);
   same('and its answer is already solved',
     solveModel(solved.text, table).text === solved.text, true);
+  // Which is a thing the answer it keeps can be asked and the file it hands over
+  // cannot: that one is what you build, and the marks were the question.
+  same('while the file it hands over carries no marks',
+    marked(withoutMarks(solved.text)).length, 0);
 }
 
 // Same model, same answer, or the two front ends have quietly drifted apart and
@@ -181,14 +186,15 @@ if (root) {
   const solve = async (from) => {
     const out = Deno.makeTempFileSync({ suffix: '.ldr' });
     const res = await run(from, out, root);
-    const text = Deno.readTextFileSync(out);
+    const file = Deno.readTextFileSync(out);
     Deno.removeSync(out);
-    return { ...res, text };
+    return { ...res, file };
   };
 
   for (const from of ['diagonales.ldr', 'diagonales.io']) {
     const solved = await solve(from);
     ok(`${from} closes`, solved.worst, 0, 1e-9);
+    same(`${from} writes a file with no marks in it`, marked(solved.file).length, 0);
 
     // Whatever the solver reported, the file has to agree: every pin of a
     // colour standing in one place, measured off the text that was written.
@@ -232,6 +238,10 @@ if (root) {
     if (solved.bodies.some((b) => b.submodel)) {
       const before = Deno.readTextFileSync(from.endsWith('.io') ? 'diagonales.ldr' : from);
       same(`${from} leaves the inside of a submodel alone`, inside(solved.text), inside(before));
+      // Including when the marks come off: a pin inside a submodel is a part of the
+      // build, and taking it out would leave a hole where a pin has to go.
+      same(`${from} takes no marks off the inside of a submodel`,
+        inside(solved.file), inside(before));
       const moved = solved.bodies.filter((b) => b.submodel && b.markers.length);
       same(`${from} still moves the submodel itself`,
         moved.length > 0 && moved.every((b) => Math.hypot(...solved.q[b.index]) > 0), true);

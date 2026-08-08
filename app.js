@@ -23,8 +23,6 @@ const JOINTS = [
   [212, '#9fc3e9'], [288, '#184632'], [191, '#f8bb3d'], [70, '#582a12'], [28, '#958a73'],
   [226, '#fff03a'],
 ];
-const PIN = { joint: '3749.dat', fix: '18651.dat' };
-const PIN_BASE = [0, -1, 0, 1, 0, 0, 0, 0, 1];
 
 const state = {
   parts: [],        // { spec, x, z, turn, level, flip }
@@ -712,12 +710,12 @@ $('file').addEventListener('change', async (ev) => {
     const text = /\.io$/i.test(file.name)
       ? await readStudio(new Uint8Array(await file.arrayBuffer()))
       : await file.text();
-    const { report, solveModel } = await import('./model.js');
+    const { report, solveModel, withoutMarks } = await import('./model.js');
     const lib = await ldrawTable();
     const res = solveModel(text, lib);
     $('output').textContent = report(res, file.name, lib);
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([res.text], { type: 'text/plain' }));
+    a.href = URL.createObjectURL(new Blob([withoutMarks(res.text)], { type: 'text/plain' }));
     a.download = file.name.replace(/\.[^.]+$/, '') + '-solved.ldr';
     a.click();
   } catch (err) {
@@ -729,24 +727,15 @@ $('close').onclick = () => { $('sheet').hidden = true; };
 
 // ---------- out ----------
 
-// Written so the command line tool can read it straight back: real parts, real
-// marker pins, in the colours the joints are drawn in.
+// The parts where they ended up, and nothing else. The joints and the fixings are
+// the question, not the answer: they are what was asked here, and by the time this
+// file exists the holes already meet. Opening it in Studio should give you the
+// thing you are building, not the thing you are building it with.
 function toLDR() {
   const out = ['0 FILE diagonals.ldr', '0 Made with LEGO diagonal generator', '0 Name: diagonals.ldr'];
-  const y = (p) => -STUD * p.level;
   const sits = (p) => (p.flip ? mul(rotY(p.turn), FLIPPED) : rotY(p.turn));
   for (const p of state.parts)
-    out.push(formatLine({ colour: 71, t: [p.x, y(p), p.z], m: sits(p), part: p.spec.part }));
-
-  const pin = (e, colour, part) => {
-    const p = state.parts[e.part];
-    const [x, z] = holeAt(p, e.hole);
-    return formatLine({ colour, t: [x, y(p), z], m: mul(rotY(p.turn), PIN_BASE), part });
-  };
-  state.joints.forEach((j, i) => {
-    for (const end of [j.a, j.b]) out.push(pin(end, JOINTS[i % JOINTS.length][0], PIN.joint));
-  });
-  for (const h of state.holds) out.push(pin(h, 72, PIN.fix));
+    out.push(formatLine({ colour: 71, t: [p.x, -STUD * p.level, p.z], m: sits(p), part: p.spec.part }));
   out.push('0');
   return out.join('\n');
 }
