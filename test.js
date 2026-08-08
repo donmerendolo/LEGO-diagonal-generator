@@ -9,7 +9,7 @@
 import { apply, mul, parseModel, rotY } from './ldraw.js';
 import { colourName, describe, findLibrary, holesOf } from './library.js';
 import { run } from './diagonal.js';
-import { moved, readModel, report, solveModel } from './model.js';
+import { FIXED, moved, readModel, report, solveModel } from './model.js';
 import { solvePlanar } from './solve.js';
 
 const deg = (rad) => rad * 180 / Math.PI;
@@ -148,9 +148,13 @@ if (root) {
     describe: (part) => describe(root, part),
     colourName: (code) => colourName(root, code),
   };
+  // The answer, not the prose: the table only knows the name of a part that has a
+  // hole in it, so a part with none is a number in the browser and a name on the
+  // command line. That is a caption. The file that comes out must be the same file.
   const text = Deno.readTextFileSync('diagonales.ldr');
-  same('the table of holes answers the same as the library',
-    report(solveModel(text, table), 'x', table), report(solveModel(text, disk), 'x', disk));
+  const byTable = solveModel(text, table), byDisk = solveModel(text, disk);
+  same('the table of holes answers the same as the library', byTable.text, byDisk.text);
+  ok('and to the same worst error', byTable.worst, byDisk.worst, 0);
 }
 
 // The whole tool, on the model it was written for. Run here rather than read
@@ -187,14 +191,14 @@ if (root) {
     same(`${from} is already solved once it is solved`, again.text, solved.text);
     Deno.removeSync(twice);
 
-    // A held hole does not move. Not nearly, not to within a hundredth of a
+    // A fixed hole does not move. Not nearly, not to within a hundredth of a
     // millimetre that the rest of the model talked it into: the same numbers that
     // went in. It is the one thing in the file the answer is not allowed to touch.
-    if (solved.held.length) {
-      const was = parseModel(Deno.readTextFileSync(from.endsWith('.io') ? 'diagonales.ldr' : from))
-        .filter((l) => l.part === '43093.dat');
-      const now = parseModel(solved.text).filter((l) => l.part === '43093.dat');
-      ok(`${from} never moves a held hole`,
+    if (solved.fixed.length) {
+      const pins = (text) => parseModel(text).filter((l) => l.part === FIXED);
+      const was = pins(Deno.readTextFileSync(from.endsWith('.io') ? 'diagonales.ldr' : from));
+      const now = pins(solved.text);
+      ok(`${from} never moves a fixed hole`,
         Math.max(...now.map((l, i) => Math.hypot(l.t[0] - was[i].t[0], l.t[2] - was[i].t[2]))), 0, 0);
     }
 

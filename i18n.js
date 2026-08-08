@@ -4,7 +4,7 @@
 const STRINGS = {
   en: {
     parts: 'Parts',
-    marks: 'Marks', join: 'Join', hold: 'Hold',
+    marks: 'Marks', join: 'Join', fix: 'Fix',
     open: '📤 Solve .ldr or .io',
     howTo: 'How this works →',
     working: 'Reading the part library…',
@@ -17,12 +17,12 @@ const STRINGS = {
     snap: 'Snap', snapStud: 'Studs', snapHalf: 'Half studs', snapFree: 'Free',
 
     offBy: 'Off by {n} mm',
-    loose: 'Nothing is held, so the whole thing can slide.',
+    loose: 'Nothing is fixed, so the whole thing can slide.',
   },
 
   es: {
     parts: 'Piezas',
-    marks: 'Marcas', join: 'Unir', hold: 'Fijar',
+    marks: 'Marcas', join: 'Unir', fix: 'Fijar',
     open: '📤 Resolver .ldr o .io',
     howTo: 'Cómo funciona →',
     working: 'Leyendo la librería de piezas…',

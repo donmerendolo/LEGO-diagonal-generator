@@ -6,20 +6,21 @@
 // own copy of what a joint means, because that is the part that is easy to get
 // quietly wrong.
 //
-//   43093  axle pin with friction     this hole stays where it is
-//   3749   axle pin without friction  holes of the same colour must meet
+//   18651  axle pin with a 2L axle    this hole stays where it is
+//   3749   axle pin                   holes of the same colour must meet
 //
-// The colour of a friction pin means nothing: it is nailed down wherever you put
-// it. One of them leaves the part free to swing about that hole, two hold it
-// still, which is the same thing a real pin does and needs no second idea.
+// The long one is long on purpose: the short pins change colour with every joint,
+// and a mark that means something else entirely should not be one more colour among
+// them. Its own colour means nothing — it is nailed down wherever you put it. One of
+// them leaves the part free to swing about that hole, two fix it still, which is the
+// same thing two real pins do and needs no second idea.
 
 import { apply, mul, parseModel, rotY, writeModel } from './ldraw.js';
 import { assignMarkers, leverOf } from './marks.js';
 import { solvePlanar } from './solve.js';
 
-export const GROUND = '43093.dat';
+export const FIXED = '18651.dat';
 export const JOINT = '3749.dat';
-const IDENTITY = [1, 0, 0, 0, 1, 0, 0, 0, 1];
 
 // An MPD is one file holding several models, each opened by "0 FILE <name>". The
 // first is the one on the table; the rest are submodels it refers to by name, and
@@ -79,11 +80,11 @@ export function solveModel(text, library) {
   const bodies = [], markers = [];
   for (const line of top) {
     if (!line.part) continue;
-    if (line.part === GROUND || line.part === JOINT) { markers.push(line); continue; }
+    if (line.part === FIXED || line.part === JOINT) { markers.push(line); continue; }
     const holes = holesUnder(line.part, line.m, line.t, blocks, library, []);
     const c = [line.t[0], line.t[2]];
     bodies.push({
-      line, holes, c, markers: [], held: [],
+      line, holes, c, markers: [], pinned: [],
       index: bodies.length,
       submodel: blocks.has(line.part),
       what: blocks.has(line.part) ? line.part : library.describe(line.part),
@@ -92,16 +93,16 @@ export function solveModel(text, library) {
   }
   if (!bodies.length) throw new Error('no parts in that model');
 
-  const stray = [], held = [], joints = new Map();
+  const stray = [], fixed = [], joints = new Map();
   const owner = assignMarkers(markers.map((m) => ({
-    x: m.t[0], y: m.t[1], z: m.t[2], group: m.part === GROUND ? null : m.colour,
+    x: m.t[0], y: m.t[1], z: m.t[2], group: m.part === FIXED ? null : m.colour,
   })), bodies);
 
   markers.forEach((marker, k) => {
     const body = bodies[owner[k]];
     if (!body) { stray.push(marker); return; }
     body.markers.push(marker);
-    if (marker.part === GROUND) { body.held.push(marker); held.push({ body, marker }); return; }
+    if (marker.part === FIXED) { body.pinned.push(marker); fixed.push({ body, marker }); return; }
     if (!joints.has(marker.colour)) joints.set(marker.colour, []);
     joints.get(marker.colour).push({ body, marker });
   });
@@ -111,15 +112,15 @@ export function solveModel(text, library) {
   for (const [colour, group] of joints)
     if (group.length < 2) { stray.push(group[0].marker); joints.delete(colour); }
 
-  // Being held is not an equation, it is a freedom the part does not have. One pin
+  // Being fixed is not an equation, it is a freedom the part does not have. One pin
   // leaves it its angle, and about that pin rather than about its own origin; two
-  // leave it nothing. Which is why a held part comes back out of here with its line
+  // leave it nothing. Which is why a fixed part comes back out of here with its line
   // untouched to the last digit, whatever the rest of the model would have preferred.
   for (const b of bodies) {
-    if (b.held.length >= 2) { b.fixed = true; continue; }
-    if (b.held.length !== 1) continue;
+    if (b.pinned.length >= 2) { b.fixed = true; continue; }
+    if (b.pinned.length !== 1) continue;
     b.turnOnly = true;
-    b.c = [b.held[0].t[0], b.held[0].t[2]];
+    b.c = [b.pinned[0].t[0], b.pinned[0].t[2]];
     b.lever = leverOf(b.holes.length ? b.holes : [{ x: b.c[0], z: b.c[1] }], { x: b.c[0], z: b.c[1] });
   }
 
@@ -147,7 +148,7 @@ export function solveModel(text, library) {
     for (const marker of b.markers) Object.assign(marker, moved(marker, turn, [dx, dz], b.c));
   }
 
-  return { bodies, held, joints, stray, q, error, worst: Math.max(0, ...error),
+  return { bodies, fixed, joints, stray, q, error, worst: Math.max(0, ...error),
            text: writeModel(lines).replace(/\s+$/, '') + '\n' };
 }
 
@@ -159,14 +160,14 @@ const pad = (s, n) => String(s).padEnd(n);
 const deg = (rad) => rad * 180 / Math.PI;
 
 export function report(res, name, library) {
-  const { bodies, held, joints, stray, q, error } = res;
+  const { bodies, fixed, joints, stray, q, error } = res;
   const many = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
   const say = [`${name} — ${many(bodies.length, 'part')}, ${many(joints.size, 'joint')}, ` +
-               `${held.length} held`, ''];
+               `${fixed.length} fixed`, ''];
 
   for (const b of bodies) {
     const [dx, dz, turn] = q[b.index];
-    const how = b.fixed ? 'held still'
+    const how = b.fixed ? 'fixed still'
       : b.turnOnly ? `turns ${deg(turn).toFixed(2)}° about its pin`
         : b.markers.length === 0 ? (b.holes.length ? 'nothing marked, left alone' : 'no holes, left alone')
           // Where the part's own origin ended up. A part swinging about a pin far
@@ -186,7 +187,7 @@ export function report(res, name, library) {
     say.push(`  joint ${pad(library.colourName(colour), 16)} ${pad(parts, 16)} ${(worst * MM).toFixed(3)} mm`);
   }
 
-  // Held parts are not in that list because they have no error to report: they did
+  // Fixed parts are not in that list because they have no error to report: they did
   // not move at all, so there is nothing for them to be off by.
   const unknowns = bodies.reduce((n, b) => n + (b.fixed ? 0 : b.turnOnly ? 1 : 3), 0);
   const equations = 2 * error.length;

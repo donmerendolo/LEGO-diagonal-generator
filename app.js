@@ -23,7 +23,7 @@ const JOINTS = [
   [212, '#9fc3e9'], [288, '#184632'], [191, '#f8bb3d'], [70, '#582a12'], [28, '#958a73'],
   [226, '#fff03a'],
 ];
-const PIN = { joint: '3749.dat', ground: '43093.dat' };
+const PIN = { joint: '3749.dat', fix: '18651.dat' };
 const PIN_BASE = [0, -1, 0, 1, 0, 0, 0, 0, 1];
 
 const state = {
@@ -360,7 +360,7 @@ function step(from, to) {
 // choose first — the colour only tells one joint from another, and the app can
 // count. Clicking a hole that is already in a joint takes that joint off.
 function useTool(part, hole) {
-  if (state.tool === 'hold') {
+  if (state.tool === 'fix') {
     remember();
     const had = holdAt(part, hole);
     if (had >= 0) state.holds.splice(had, 1);
@@ -368,13 +368,22 @@ function useTool(part, hole) {
     state.armed = null;
     return;
   }
+  // With a hole already picked, this click is the other end of that join and nothing
+  // else — a hole can be in more than one joint, which is how three parts meet at a
+  // point, so landing on one that is already joined adds to it rather than undoing
+  // it. Undoing is what a click means when nothing is waiting.
+  if (state.armed) {
+    const { part: was, hole: wasHole } = state.armed;
+    state.armed = null;
+    if (was === part && wasHole === hole) return;             // the same hole twice
+    if (was === part) { state.armed = { part, hole }; return; }  // a part cannot meet itself
+    remember();
+    state.joints.push({ a: { part: was, hole: wasHole }, b: { part, hole } });
+    return;
+  }
   const had = jointAt(part, hole);
-  if (had >= 0) { remember(); state.joints.splice(had, 1); state.armed = null; return; }
-  if (!state.armed) { state.armed = { part, hole }; return; }
-  if (state.armed.part === part && state.armed.hole === hole) { state.armed = null; return; }
-  remember();
-  state.joints.push({ a: state.armed, b: { part, hole } });
-  state.armed = null;
+  if (had >= 0) { remember(); state.joints.splice(had, 1); return; }
+  state.armed = { part, hole };
 }
 
 // ---------- turning ----------
@@ -737,7 +746,7 @@ function toLDR() {
   state.joints.forEach((j, i) => {
     for (const end of [j.a, j.b]) out.push(pin(end, JOINTS[i % JOINTS.length][0], PIN.joint));
   });
-  for (const h of state.holds) out.push(pin(h, 72, PIN.ground));
+  for (const h of state.holds) out.push(pin(h, 72, PIN.fix));
   out.push('0');
   return out.join('\n');
 }
