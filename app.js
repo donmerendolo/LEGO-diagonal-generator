@@ -528,6 +528,20 @@ globalThis.addEventListener('pointermove', (ev) => {
   if (!pending) return;
   const at = atPointer(ev);
 
+  // A part taken from the panel does not exist yet. It is made the moment the
+  // gesture turns into a drag, under the pointer, and from there it is an ordinary
+  // part being dragged: same threshold, same snapping, same one step to undo.
+  if (pending.spec !== undefined) {
+    if (Math.hypot(at[0] - pending.from[0], at[1] - pending.from[1]) < 6) return;
+    remember();
+    const [x, z] = snapPoint(at, ev);
+    state.parts.push({ spec: CATALOGUE[pending.spec], level: 0, turn: 0, flip: false, x, z });
+    state.selected = state.parts.length - 1;
+    state.armed = null;
+    pending = { part: state.selected, hole: null, from: at, moved: true,
+                was: [x, z], held: [], anchors: [] };
+  }
+
   // Taking hold of the handle is already the whole gesture; taking hold of a part is
   // only a gesture once it has gone somewhere, or every click on a hole would count
   // as a drag of nothing.
@@ -602,6 +616,17 @@ globalThis.addEventListener('keydown', (ev) => {
 });
 
 // ---------- panels ----------
+
+// Two ways to the same thing, because both are the obvious one to somebody: drag it
+// where you want it, or click and let it land in the middle of what you are looking
+// at. A drag takes over the gesture, so the click that would have followed it never
+// comes and nothing is added twice.
+$('partPick').addEventListener('dragstart', (ev) => ev.preventDefault());
+$('partPick').addEventListener('pointerdown', (ev) => {
+  const b = ev.target.closest('[data-spec]');
+  if (!b || ev.button === 2) return;
+  pending = { spec: +b.dataset.spec, from: atPointer(ev) };
+});
 
 $('partPick').addEventListener('click', (ev) => {
   const b = ev.target.closest('[data-spec]');
