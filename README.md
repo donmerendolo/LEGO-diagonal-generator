@@ -6,7 +6,7 @@
   </p>
 </div>
 
-Setting a diagonal by hand in Studio manually never ends up *perfect* and is tedious to do,
+Setting a diagonal by hand in Studio never ends up *perfect* and is tedious to do,
 so this tool lets you mark which holes go together and rotates and moves the parts
 automatically to the correct position.
 
