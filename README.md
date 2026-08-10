@@ -32,7 +32,7 @@ works, and so do submodels. Either press **Solve .ldr or .io** in the web app, o
 deno run -A diagonal.js mymodel.ldr
 ```
 
-**→ [How to mark a model up: TUTORIAL.md](TUTORIAL.md)**
+**[How to mark a model up: TUTORIAL.md](TUTORIAL.md)**
 
 ## Running it
 
