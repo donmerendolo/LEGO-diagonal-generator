@@ -9,6 +9,7 @@
 import { apply, mul, parseModel, rotAbout, rotY, unit, writeModel } from './ldraw.js';
 import { colourName, describe, findLibrary, holesOf } from './library.js';
 import { run } from './diagonal.js';
+import { withoutHidden } from './io.js';
 import { FIXED, JOINT, moved, readModel, report, solveModel, withoutMarks } from './model.js';
 import { solvePlanar } from './solve.js';
 
@@ -117,6 +118,30 @@ for (const flip of [1, -1]) {
   const line = parseModel('1 19 126 0 102 0 -1 0 1 0 0 0 0 1 3749.dat')[0];
   same('a type 1 line reads back', `${line.colour} ${line.t} ${line.part}`, '19 126,0,102 3749.dat');
   same('anything else is left alone', parseModel('0 FILE x')[0].part, undefined);
+}
+
+// ---------- what Studio was hiding ----------
+
+// A model.ldr says nothing about what is hidden, so the answer only exists in the
+// copy Studio keeps beside it. Written out here rather than taken from a real .io,
+// because what has to be checked is the matching up and the refusal to guess, and
+// those are two short strings.
+{
+  const model = ['0 FILE t',
+    '1 71 0 0 0 1 0 0 0 1 0 0 0 1 41239.dat',
+    '1 71 40 0 0 1 0 0 0 1 0 0 0 1 32271.dat'].join('\n');
+  const own = ['0 FILE t',
+    '11 16 1 False 0 0.000000 0.000000 0.000000 1 0 0 0 1 0 0 0 1 41239.dat',
+    '11 16 2 True 0 40.000000 0.000000 0.000000 1 0 0 0 1 0 0 0 1 32271.dat'].join('\n');
+  const kept = withoutHidden(model, own);
+  same('a hidden part is left out', /32271/.test(parseModel(kept)
+    .filter((l) => l.part).map((l) => l.part).join(' ')), false);
+  same('and the one beside it is not', parseModel(kept).filter((l) => l.part).length, 1);
+  same('and the answer says what it left out', /hidden in Studio/.test(kept), true);
+  // Two copies that do not line up are two different models, and picking lines out of
+  // one by counting along the other would delete whatever happened to be at that spot.
+  same('but nothing is left out when the two copies disagree',
+    withoutHidden(model, own.split('\n').slice(0, 2).join('\n')), model);
 }
 
 const root = findLibrary();

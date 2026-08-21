@@ -41,7 +41,47 @@ export async function readZipEntry(bytes, want) {
   throw new Error(`no ${want} inside that file`);
 }
 
+// What Studio hides, it hides in a copy of its own. Neither model.ldr nor the .ldr
+// Studio exports — the same file, byte for byte — says anything about it, and its own
+// count of bricks includes the hidden ones, so something set aside in Studio otherwise
+// reads back here as an ordinary part and gets solved along with the rest.
+//
+// modelv2.ldr is that model again with every placement written as a line of type 11,
+// in the same blocks in the same order, and the fourth field of one says whether it is
+// hidden. The two are matched by position, because that is the only thing they agree
+// on exactly — and checked before it is trusted: same number of placements, each in
+// the same place to a thousandth. If they do not line up, nothing is left out. Solving
+// a part that was out of sight is a smaller mistake than losing one.
+//
+// The line is not deleted but replaced by a comment, so the answer says what it left
+// out and where, and says it in the file rather than only on the way past.
+export function withoutHidden(model, own) {
+  const lines = model.split(/\r?\n/);
+  const placed = [];
+  lines.forEach((raw, at) => {
+    const f = raw.trim().split(/\s+/);
+    if (f[0] === '1') placed.push({ at, f });
+  });
+  const theirs = own.split(/\r?\n/)
+    .map((raw) => raw.trim().split(/\s+/)).filter((f) => f[0] === '11');
+
+  const lineUp = placed.length === theirs.length && placed.every(({ f }, i) =>
+    [0, 1, 2].every((k) => Math.abs(+f[2 + k] - +theirs[i][5 + k]) < 0.001));
+  if (!lineUp) return model;
+
+  placed.forEach(({ at, f }, i) => {
+    if (theirs[i][3] === 'True') lines[at] = `0 hidden in Studio, left out: ${f.slice(14).join(' ')}`;
+  });
+  return lines.join('\n');
+}
+
 // Studio writes the file with a byte order mark, which is one more thing than
 // LDraw says a line can start with.
-export const readStudio = async (bytes) =>
-  (await readZipEntry(bytes, 'model.ldr')).replace(/^﻿/, '');
+export async function readStudio(bytes) {
+  const model = (await readZipEntry(bytes, 'model.ldr')).replace(/^﻿/, '');
+  try {
+    return withoutHidden(model, (await readZipEntry(bytes, 'modelv2.ldr')).replace(/^﻿/, ''));
+  } catch {
+    return model;                       // an .io old enough not to have that copy
+  }
+}
