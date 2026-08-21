@@ -4,11 +4,15 @@
 // The command line tool reads the holes off the LDraw library; the web app knows
 // its own catalogue. Neither should have its own opinion about the answer.
 //
-// Only X and Z are compared, so a pin joining two parts on different levels —
-// one long pin through both — is a joint like any other. Height is only the tie
-// breaker, and there is a tie whenever a model is already solved: the joint has
-// done its job, so both parts have a hole in that exact spot and the nearest one
-// is a coin toss.
+// The coordinates are the turning plane's own: X and Z across it, Y along the axis
+// everything turns about — which for a model standing upright is the model's own X,
+// Y and Z, and for one lying at an angle is the same thing said in its own terms.
+//
+// Only X and Z are compared, so a pin joining two parts on different levels — one
+// long pin through both — is a joint like any other. The distance along the axis is
+// only the tie breaker, and there is a tie whenever a model is already solved: the
+// joint has done its job, so both parts have a hole in that exact spot and the
+// nearest one is a coin toss.
 
 const SNAP = 0.5;              // LDU a marker may sit from the hole it is in
 

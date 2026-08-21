@@ -15,7 +15,7 @@
 // them leaves the part free to swing about that hole, two fix it still, which is the
 // same thing two real pins do and needs no second idea.
 
-import { apply, mul, parseModel, rotY, writeModel } from './ldraw.js';
+import { apply, cross, dot, mul, parseModel, rotAbout, unit, writeModel } from './ldraw.js';
 import { assignMarkers, leverOf } from './marks.js';
 import { solvePlanar } from './solve.js';
 
@@ -62,27 +62,97 @@ function holesUnder(part, m, t, blocks, library, out, depth = 0) {
   return out;
 }
 
-// A part carried to where the answer says: an extra turn about Y, then a slide.
-export function moved(line, turn, slide, c) {
-  const s = Math.sin(turn), co = Math.cos(turn);
-  const ux = line.t[0] - c[0], uz = line.t[2] - c[1];
+// ---------- which way is round ----------
+
+// Every marker pin is pushed into the hole it marks, so it lies along that hole —
+// and that hole is the axis its part turns about. The model says which way is round,
+// which is why it does not have to be stood on end in Studio first.
+//
+// This is the one thing in the whole tool written down about a particular part
+// instead of read off it: an axle pin's length runs along its own X, so the axis it
+// lies on is the first column of its matrix. Both markers are that shape, and a part
+// that is already in the library is not going to change shape now.
+const AXIS_TOL = Math.cos(Math.PI / 180);   // a degree, far looser than Studio ever needs
+
+// Studio writes six decimals, so a mark meant to stand straight up comes back a
+// ten-millionth off it. Within a hair of one of the model's own axes it *is* that
+// axis: taking the exact one keeps the numbers in the file clean and leaves an
+// upright model coming out exactly as it did before any of this. A real tilt is
+// thousands of times further away than this.
+const SQUARE = 1e-4;
+const square = (a) => {
+  const i = a.findIndex((v) => Math.abs(Math.abs(v) - 1) < SQUARE);
+  return i < 0 ? a : a.map((v, k) => (k === i ? Math.sign(v) : 0));
+};
+
+// Any pair of directions across the axis will do — the model is the same shape seen
+// from any of them, so which pair is picked cannot change the answer. This one gives
+// back plain X and Z when the axis is the vertical one, so an upright model comes out
+// digit for digit as it always did.
+const across = (axis) => {
+  const away = axis.map(Math.abs);
+  const helper = [0, 0, 0];
+  helper[away.lastIndexOf(Math.min(...away))] = 1;
+  const u = unit(cross(axis, helper));
+  return { axis, u, v: cross(u, axis) };
+};
+
+export const UPRIGHT = across([0, 1, 0]);
+
+export function frameOf(markers) {
+  const dirs = markers.map((l) => unit([l.m[0], l.m[3], l.m[6]]));
+  // A pin goes into a hole either way round, so what it gives is a line and not an
+  // arrow. The ones facing the other way are turned about before they are averaged,
+  // and averaged rather than taken from the first because Studio rounds its matrices
+  // and there is no reason one marker should be the one that decides.
+  const one = dirs[0];
+  const same = dirs.map((d) => (dot(d, one) < 0 ? d.map((v) => -v) : d));
+  const axis = square(unit(same.reduce((s, d) => s.map((v, i) => v + d[i]), [0, 0, 0])));
+
+  // Marks lying across each other are two turning planes, and this solves one. Said
+  // out loud, because the alternative is an answer that is confidently wrong.
+  const astray = same.findIndex((d) => dot(d, axis) < AXIS_TOL);
+  if (astray >= 0)
+    throw new Error(`the marker at ${markers[astray].t.map((v) => +v.toFixed(2)).join(' ')} ` +
+      'lies across the others: every mark has to run along the same axis');
+  return across(axis);
+}
+
+// A point in the turning plane's own frame: x and z across it, y along the axis.
+// With the axis upright those are the model's own X, Y and Z, unchanged.
+const flat = (f, p) => [dot(p, f.u), dot(p, f.v)];
+const inFrame = (f, p) => ({ x: dot(p, f.u), y: dot(p, f.axis), z: dot(p, f.v) });
+
+// A part carried to where the answer says: an extra turn about the axis, through the
+// point it turns about, and then a slide across the plane.
+export function moved(line, turn, slide, c, frame = UPRIGHT) {
+  const R = rotAbout(frame.axis, turn);
+  const o = frame.u.map((_, i) => frame.u[i] * c[0] + frame.v[i] * c[1]);
+  const p = apply(R, o, line.t.map((v, i) => v - o[i]));
   return {
     ...line,
-    t: [c[0] + ux * co + uz * s + slide[0], line.t[1], c[1] - ux * s + uz * co + slide[1]],
+    t: p.map((v, i) => v + slide[0] * frame.u[i] + slide[1] * frame.v[i]),
     // Onto the matrix, not instead of it: a part standing on edge or turned a
     // quarter keeps every bit of that, and only picks up the extra swing.
-    m: mul(rotY(turn), line.m),
+    m: mul(R, line.m),
   };
 }
 
 export function solveModel(text, library) {
   const { lines, blocks, top } = readModel(text);
-  const bodies = [], markers = [];
+  const isMark = (l) => l.part === FIXED || l.part === JOINT;
+  const markers = top.filter(isMark);
+  if (!markers.length) throw new Error('no marker pins in that model: nothing to solve');
+
+  // Read before anything else, because everything else is measured in it.
+  const frame = frameOf(markers);
+
+  const bodies = [];
   for (const line of top) {
-    if (!line.part) continue;
-    if (line.part === FIXED || line.part === JOINT) { markers.push(line); continue; }
-    const holes = holesUnder(line.part, line.m, line.t, blocks, library, []);
-    const c = [line.t[0], line.t[2]];
+    if (!line.part || isMark(line)) continue;
+    const holes = holesUnder(line.part, line.m, line.t, blocks, library, [])
+      .map((h) => ({ ...inFrame(frame, [h.x, h.y, h.z]), axle: h.axle }));
+    const c = flat(frame, line.t);
     bodies.push({
       line, holes, c, markers: [], pinned: [],
       index: bodies.length,
@@ -95,7 +165,7 @@ export function solveModel(text, library) {
 
   const stray = [], fixed = [], joints = new Map();
   const owner = assignMarkers(markers.map((m) => ({
-    x: m.t[0], y: m.t[1], z: m.t[2], group: m.part === FIXED ? null : m.colour,
+    ...inFrame(frame, m.t), group: m.part === FIXED ? null : m.colour,
   })), bodies);
 
   markers.forEach((marker, k) => {
@@ -120,35 +190,37 @@ export function solveModel(text, library) {
     if (b.pinned.length >= 2) { b.fixed = true; continue; }
     if (b.pinned.length !== 1) continue;
     b.turnOnly = true;
-    b.c = [b.pinned[0].t[0], b.pinned[0].t[2]];
+    b.c = flat(frame, b.pinned[0].t);
     b.lever = leverOf(b.holes.length ? b.holes : [{ x: b.c[0], z: b.c[1] }], { x: b.c[0], z: b.c[1] });
   }
 
   // A joint of three markers is three points at one place, so each one after the
   // first has to meet the one before: two equations apiece, no more.
-  const at = (e) => ({ body: e.body.index, c: e.body.c, p: [e.marker.t[0], e.marker.t[2]] });
+  const at = (e) => ({ body: e.body.index, c: e.body.c, p: flat(frame, e.marker.t) });
   const constraints = [];
   for (const group of joints.values())
     for (let i = 1; i < group.length; i++)
       constraints.push({ a: at(group[i - 1]), b: at(group[i]) });
   if (!constraints.length)
-    throw new Error(markers.length
-      ? 'nothing to join: two pins of one colour make a joint, and there are none'
-      : 'no marker pins in that model: nothing to solve');
+    throw new Error('nothing to join: two pins of one colour make a joint, and there are none');
 
   const { q, error } = solvePlanar(bodies, constraints);
 
   for (const b of bodies) {
+    // A fixed part is not moved by nothing, it is not moved. Passing it through the
+    // arithmetic with a turn of zero would come back a fraction of a nanometre off,
+    // and untouched to the last digit is the whole promise of being fixed.
+    if (b.fixed) continue;
     const [dx, dz, turn] = q[b.index];
-    Object.assign(b.line, moved(b.line, turn, [dx, dz], b.c));
+    Object.assign(b.line, moved(b.line, turn, [dx, dz], b.c, frame));
     // The top level markers ride along, so the file can go straight back in and be
     // solved again without putting every pin back by hand. What is inside a
     // submodel is not touched at all: it travels with the line that refers to it,
     // and moving it here as well would move it twice.
-    for (const marker of b.markers) Object.assign(marker, moved(marker, turn, [dx, dz], b.c));
+    for (const marker of b.markers) Object.assign(marker, moved(marker, turn, [dx, dz], b.c, frame));
   }
 
-  return { bodies, fixed, joints, stray, q, error, worst: Math.max(0, ...error),
+  return { bodies, fixed, joints, stray, q, error, frame, worst: Math.max(0, ...error),
            text: writeModel(lines).replace(/\s+$/, '') + '\n' };
 }
 
@@ -174,10 +246,13 @@ const pad = (s, n) => String(s).padEnd(n);
 const deg = (rad) => rad * 180 / Math.PI;
 
 export function report(res, name, library) {
-  const { bodies, fixed, joints, stray, q, error } = res;
+  const { bodies, fixed, joints, stray, q, error, frame } = res;
   const many = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
+  // Which way the marks said to turn. It used to be an assumption the model had to
+  // be bent to fit, so now that it is read off the file it is worth reading back.
   const say = [`${name} — ${many(bodies.length, 'part')}, ${many(joints.size, 'joint')}, ` +
-               `${fixed.length} fixed`, ''];
+               `${fixed.length} fixed, turning about ` +
+               frame.axis.map((v) => +v.toFixed(4)).join(' '), ''];
 
   for (const b of bodies) {
     const [dx, dz, turn] = q[b.index];

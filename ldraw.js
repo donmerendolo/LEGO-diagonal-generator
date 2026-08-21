@@ -4,10 +4,10 @@
 // where the nine numbers are the rotation matrix, by rows, and a point of the
 // part lands at M·p + t. Units are LDU: 20 LDU = 1 stud = 8 mm.
 //
-// Y points down, so the plane parallel to the floor is XZ and the only rotation
-// this tool ever applies is about Y. Everything else in a part's matrix — on
-// edge, upside down, turned a quarter — is carried through untouched, which is
-// why the answer is multiplied *onto* the matrix rather than replacing it.
+// Y points down, so the plane parallel to the floor is XZ. Everything else in a
+// part's matrix — on edge, upside down, turned a quarter — is carried through
+// untouched, which is why the answer is multiplied *onto* the matrix rather than
+// replacing it.
 
 export const MM = 0.4;          // one LDU, in millimetres
 export const STUD = 20;         // LDU
@@ -54,4 +54,24 @@ export const rotY = (th) => {
   const c = Math.cos(th), s = Math.sin(th);
   return [c, 0, s, 0, 1, 0, -s, 0, c];
 };
+
+// A turn about any axis through the origin, by Rodrigues. Put the axis at Y and
+// every term of it collapses to rotY above, which is what lets a model built the
+// upright way keep coming out exactly as it did.
+export const rotAbout = ([x, y, z], th) => {
+  const c = Math.cos(th), s = Math.sin(th), k = 1 - c;
+  return [
+    c + k * x * x, k * x * y - s * z, k * x * z + s * y,
+    k * y * x + s * z, c + k * y * y, k * y * z - s * x,
+    k * z * x - s * y, k * z * y + s * x, c + k * z * z,
+  ];
+};
+
+export const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+export const cross = (a, b) => [
+  a[1] * b[2] - a[2] * b[1],
+  a[2] * b[0] - a[0] * b[2],
+  a[0] * b[1] - a[1] * b[0],
+];
+export const unit = (a) => { const n = Math.hypot(...a); return a.map((v) => v / n); };
 
