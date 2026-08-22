@@ -36,13 +36,15 @@ attachment.
   <img src="tutorial/tutorial-image-4.png" alt="Submodel placed in design" width="600">
 </p>
 
-### 4. The other two parts at weird angles I want the tool to place are two 9L beams
+### 4. The other parts I want the tool to place are two 9L beams
 
 <p align="center">
   <img src="tutorial/tutorial-image-5.png" alt="9L beams" width="600">
 </p>
 
-### 5. Remove the attachment so that only the submodel and the two beams remain
+### 5. Remove or hide the attachment so that only the submodel and the two beams remain
+
+If you're exporting .io files, hidden parts and submodels are ignored by the tool entirely, and they won't be in the output file.
 
 <p align="center">
   <img src="tutorial/tutorial-image-6.png" alt="Submodel and two beams" width="600">
@@ -78,19 +80,16 @@ I placed my joint markers like this:
 
 > [!IMPORTANT]
 > If you need more than one joint, they are paired by color.
+>
 > **Two joint markers of the same color will be connected together.**
+>
+> **All joints have to be parallel to each other.** If your model has axes of rotation that are not parallel, you will need to solve them separately.
 
 <p align="center">
   <img src="tutorial/multiple-joints.png" alt="Multiple joints" width="600">
 </p>
 
-### 8. Rotate your model so that rotating axes are parallel to the vertical axis
-
-<p align="center">
-  <img src="tutorial/tutorial-image-9.png" alt="Parallel to vertical" width="600">
-</p>
-
-### 9. Process your design with LEGO diagonal generator
+### 8. Process your design with LEGO diagonal generator
 
 Either by uploading it to [the web app](https://donmerendolo.github.io/LEGO-diagonal-generator/)
 or by using the CLI as follows (in the repo root):
@@ -99,11 +98,11 @@ or by using the CLI as follows (in the repo root):
 deno run -A diagonal.js <your-file>.io
 ```
 
-### 10. LEGO diagonal generator will generate a `<your-file>-solved.ldr` file with your parts perfectly positioned
+### 9. LEGO diagonal generator will generate a `<your-file>-solved.ldr` file with your parts perfectly positioned
 
 Import it to your design and you are done!
 
 <p align="center">
-  <img src="tutorial/tutorial-image-10.png" alt="Perfectly positioned" width="600">
+  <img src="tutorial/tutorial-image-9.png" alt="Perfectly positioned" width="600">
 </p>
 
