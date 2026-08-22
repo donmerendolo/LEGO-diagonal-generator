@@ -56,6 +56,12 @@ deno run -A tools/pictures.js   # img/*.png — the palette's pictures
 deno run -A tools/holes.js      # holes.js — every hole in the library, for the browser
 ```
 
+## Check out [LEGO chain generator](https://donmerendolo.github.io/LEGO-chain-generator/) too
+
+My other tool for making chains, source code in: [donmerendolo/LEGO-chain-generator](https://github.com/donmerendolo/LEGO-chain-generator).
+
+---
+
 ## License
 
 The code is [GPL-3.0](LICENSE.md).
