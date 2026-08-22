@@ -87,6 +87,58 @@ const weight = (k) => k.w ?? 1;
 const cost = (r, constraints) =>
   r.reduce((s, [x, z], i) => s + weight(constraints[i]) ** 2 * (x * x + z * z), 0);
 
+// Normal equations, accumulated straight from the two non-zero blocks of each row
+// rather than building the whole Jacobian.
+function normal(q, r, bodies, constraints, arm, n) {
+  const A = Array.from({ length: n }, () => new Array(n).fill(0));
+  const g = new Array(n).fill(0);
+  constraints.forEach((k, ci) => {
+    const w = weight(k);
+    for (const axis of [0, 1]) {
+      const row = new Map();
+      for (const [term, sign] of [[k.a, w], [k.b, -w]]) {
+        if (term.body === null) continue;
+        const body = bodies[term.body];
+        if (body.fixed) continue;              // nothing of it left to solve for
+        const base = term.body * 3;
+        if (!body.turnOnly) row.set(base + axis, (row.get(base + axis) ?? 0) + sign);
+        row.set(base + 2, (row.get(base + 2) ?? 0)
+          + sign * turnRate(q, term)[axis] / arm[term.body]);
+      }
+      for (const [i, vi] of row) {
+        g[i] += vi * w * r[ci][axis];
+        for (const [j, vj] of row) A[i][j] += vi * vj;
+      }
+    }
+  });
+  return { A, g };
+}
+
+// Which unknowns the constraints never reached, each from 0 for tied down to 1 for
+// free to move, and the sum of them all is how many ways the model can still move.
+// "21 unknowns, 20 equations, 1 free" says there is one; this says whose it is.
+//
+// It is the diagonal of the projector onto the null space, got at without going
+// anywhere near an eigenvector: solve (A + εI)x = eᵢ and take ε·xᵢ, which is
+// Σ vⱼ[i]²·ε/(λⱼ+ε) — every direction the model is held in contributes nothing, and
+// every direction it is not contributes the whole of its share.
+//
+// Where several parts swing together the freedom is shared out among them, and they
+// are all named, because any one of them is somewhere it could be pinned down.
+function freedom(A, n, bodies) {
+  const EPS = 1e-9;
+  const out = bodies.map(() => [0, 0, 0]);
+  for (let i = 0; i < n; i++) {
+    const body = bodies[(i / 3) | 0], k = i % 3;
+    if (body.fixed || (body.turnOnly && k < 2)) continue;   // that unknown does not exist
+    const e = new Array(n).fill(0);
+    e[i] = 1;
+    const x = gauss(A.map((row, r) => row.map((v, c) => (r === c ? v + EPS : v))), e, n);
+    out[(i / 3) | 0][k] = x ? Math.min(1, Math.max(0, EPS * x[i])) : 1;
+  }
+  return out;
+}
+
 // bodies: [{ c: [x, z], lever, fixed, turnOnly }], the point each one turns about
 // and how far its furthest hole is from it.
 // constraints: [{ a, b }] where a term is { body, c, p } and a body of null means
@@ -104,7 +156,7 @@ const cost = (r, constraints) =>
 // ten-billionth of a stud. Absurd next to a pin hole, but Newton doubles its
 // digits every step, so the last few are two iterations and they keep the
 // reported error meaning "the solver is done" rather than "the solver stopped".
-export function solvePlanar(bodies, constraints, { iters = 80, tol = 1e-20 } = {}) {
+export function solvePlanar(bodies, constraints, { iters = 80, tol = 1e-20, loose = false } = {}) {
   const n = bodies.length * 3;
   const arm = bodies.map(reach);
   const q = bodies.map(() => [0, 0, 0]);
@@ -112,29 +164,7 @@ export function solvePlanar(bodies, constraints, { iters = 80, tol = 1e-20 } = {
   let lambda = 1e-6;
 
   for (let it = 0; it < iters && best > tol; it++) {
-    // Normal equations, accumulated straight from the two non-zero blocks of
-    // each row rather than building the whole Jacobian.
-    const A = Array.from({ length: n }, () => new Array(n).fill(0));
-    const g = new Array(n).fill(0);
-    constraints.forEach((k, ci) => {
-      const w = weight(k);
-      for (const axis of [0, 1]) {
-        const row = new Map();
-        for (const [term, sign] of [[k.a, w], [k.b, -w]]) {
-          if (term.body === null) continue;
-          const body = bodies[term.body];
-          if (body.fixed) continue;              // nothing of it left to solve for
-          const base = term.body * 3;
-          if (!body.turnOnly) row.set(base + axis, (row.get(base + axis) ?? 0) + sign);
-          row.set(base + 2, (row.get(base + 2) ?? 0)
-            + sign * turnRate(q, term)[axis] / arm[term.body]);
-        }
-        for (const [i, vi] of row) {
-          g[i] += vi * w * r[ci][axis];
-          for (const [j, vj] of row) A[i][j] += vi * vj;
-        }
-      }
-    });
+    const { A, g } = normal(q, r, bodies, constraints, arm, n);
 
     let stepped = false;
     for (let tries = 0; tries < 12 && !stepped; tries++) {
@@ -158,5 +188,11 @@ export function solvePlanar(bodies, constraints, { iters = 80, tol = 1e-20 } = {
     if (!stepped) break;                 // nothing left to gain
   }
 
-  return { q, error: residuals(q, constraints).map(([x, z]) => Math.hypot(x, z)) };
+  return {
+    q,
+    error: residuals(q, constraints).map(([x, z]) => Math.hypot(x, z)),
+    // Asked for, not always: it is a solve per unknown, and the board redraws this
+    // on every frame of a drag where nobody is reading it.
+    free: loose ? freedom(normal(q, r, bodies, constraints, arm, n).A, n, bodies) : null,
+  };
 }

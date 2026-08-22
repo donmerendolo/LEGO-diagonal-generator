@@ -97,6 +97,28 @@ for (const flip of [1, -1]) {
   ok('an unmarked part stays put', Math.hypot(...q[2]), 0, 1e-12);
 }
 
+// "One freedom left" is not an answer until it says whose. Counted per part, so a
+// model that will not sit still names what to pin down instead of leaving it to be
+// found by hand. A part held at one hole can still swing about it, and that one
+// freedom is spread over all three of its unknowns, because turning about a hole
+// that is not the part's own origin slides the part as well.
+{
+  const holds = (holes) => solvePlanar([{ c: [0, 0], lever: 120 }],
+    holes.map((z) => ({ a: { body: 0, c: [0, 0], p: [0, z] }, b: { body: null, p: [0, z] } })),
+    { loose: true }).free[0].reduce((s, v) => s + v, 0);
+  ok('a part held by one hole has one way left to move', holds([-120]), 1, 1e-4);
+  ok('and held by two it has none at all', holds([-120, 120]), 0, 1e-4);
+}
+
+{
+  const [bodies, constraints] = triangle(1);
+  bodies.push({ c: [500, 500] });
+  const { free } = solvePlanar(bodies, constraints, { loose: true });
+  const ways = (b) => free[b].reduce((s, v) => s + v, 0);
+  ok('a part the marks never reached has all three', ways(2), 3, 1e-4);
+  ok('and the triangle has none to give', ways(0) + ways(1), 0, 1e-4);
+}
+
 // ---------- the transformation ----------
 
 // A part standing on edge must still be standing on edge afterwards. Turning

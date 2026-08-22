@@ -204,7 +204,7 @@ export function solveModel(text, library) {
   if (!constraints.length)
     throw new Error('nothing to join: two pins of one colour make a joint, and there are none');
 
-  const { q, error } = solvePlanar(bodies, constraints);
+  const { q, error, free } = solvePlanar(bodies, constraints, { loose: true });
 
   for (const b of bodies) {
     // A fixed part is not moved by nothing, it is not moved. Passing it through the
@@ -220,7 +220,7 @@ export function solveModel(text, library) {
     for (const marker of b.markers) Object.assign(marker, moved(marker, turn, [dx, dz], b.c, frame));
   }
 
-  return { bodies, fixed, joints, stray, q, error, frame, worst: Math.max(0, ...error),
+  return { bodies, fixed, joints, stray, q, error, free, frame, worst: Math.max(0, ...error),
            text: writeModel(lines).replace(/\s+$/, '') + '\n' };
 }
 
@@ -246,7 +246,7 @@ const pad = (s, n) => String(s).padEnd(n);
 const deg = (rad) => rad * 180 / Math.PI;
 
 export function report(res, name, library) {
-  const { bodies, fixed, joints, stray, q, error, frame } = res;
+  const { bodies, fixed, joints, stray, q, error, free, frame } = res;
   const many = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
   // Which way the marks said to turn. It used to be an assumption the model had to
   // be bent to fit, so now that it is read off the file it is worth reading back.
@@ -281,10 +281,22 @@ export function report(res, name, library) {
   const unknowns = bodies.reduce((n, b) => n + (b.fixed ? 0 : b.turnOnly ? 1 : 3), 0);
   const equations = 2 * error.length;
   say.push('');
+
+  // Subtracting the one from the other was arithmetic, not an answer: it added up a
+  // part nobody constrained and a joint that was said twice and came out with a number
+  // belonging to neither. This is the real count, and it says whose it is — because
+  // "one freedom left" is only useful if you know where to put the pin.
+  const ways = free.flat().reduce((s, v) => s + v, 0);
+  const round = Math.round(ways);
   say.push(`${unknowns} unknowns, ${equations} equations, ` +
-    (unknowns > equations ? `${unknowns - equations} free`
-      : unknowns < equations ? `${equations - unknowns} more than needed`
-        : 'exactly determined'));
+    (round === 0 ? 'nothing left loose' : `${round} way${round === 1 ? '' : 's'} left to move`));
+  for (const b of bodies) {
+    const [dx, dz, turn] = free[b.index];
+    if (dx + dz + turn < 0.02) continue;
+    const how = [[dx + dz, 'slide'], [turn, 'turn']].filter(([v]) => v > 0.01).map(([, w]) => w);
+    say.push(`  loose  #${pad(b.index + 1, 3)} ${pad(b.line.part.replace('.dat', ''), 8)} ` +
+      `${pad(b.submodel ? `[${b.what}]` : b.what, 34)} can still ${how.join(' and ')}`);
+  }
 
   // How near is near enough is not something this can know: a pin hole swallows a
   // little and a beam flexes a little more, and how much is a matter of what you
