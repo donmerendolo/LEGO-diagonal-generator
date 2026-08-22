@@ -4,10 +4,13 @@
 // A part's own .dat says where its holes are, the same way the chain generator
 // took every diameter off the model instead of writing it down.
 //
-// A hole is a sub-file called beamhole, connhole, peghole or axlehol-something,
-// and its own origin is the centre of the hole. Not everything with "hol" in the
-// name is one: npeghole and npeghol4 are the rim *between* two holes, half a stud
-// off, and a beam that offered a hole there would be lying.
+// A hole is a sub-file whose name begins beamhol, connhol, peghol, or axlehol —
+// with the axle ones also written axl2hol, axl3hol and so on up, one family and not
+// four — and its own origin is the centre of the hole. Not everything with "hol" in
+// the name is one, which is why the name has to *begin* that way: npeghole and
+// npeghol4 are the rim *between* two holes, half a stud off, and a beam that offered
+// a hole there would be lying. The same anchoring keeps out Duplo's daxlehole and a
+// click hinge's clikhole, which take nothing this tool can join.
 //
 // If a hole shape ever turns up under a name not on that list, nothing here goes
 // quietly wrong: a marker pin that lands on it belongs to no part, and the tool
@@ -60,8 +63,8 @@ function readPart(root, name) {
 // will. Both take an axle pin, so either can be marked, but a drawing that shows
 // them alike is a drawing that has to be double checked against the real part.
 const base = (name) => name.split('/').pop();
-const isHole = (name) => /^(beamhole|connhole|peghole|axlehol)/i.test(base(name));
-const isAxle = (name) => /^axlehol/i.test(base(name));
+const isHole = (name) => /^(beamhol|connhol|peghol|axl(e|\d)hol)/i.test(base(name));
+const isAxle = (name) => /^axl(e|\d)hol/i.test(base(name));
 
 export const partText = (root, name) => readPart(root, name)?.text ?? null;
 

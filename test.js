@@ -217,6 +217,23 @@ const table = {
   ok('and it is the same answer whichever way the model is standing',
     apart(tip(lying.text, back), solved.text), 0, 1e-3);
 
+  // Being ignored has two reasons and they send you to look for different things: a
+  // pin dropped where there is no hole, and a pin sitting perfectly in one with no
+  // second pin of its colour to meet. Told apart here rather than in the wording, so
+  // the wording can be changed without the difference quietly going away.
+  {
+    const lines = parseModel(solved.text);
+    const first = lines.findIndex((l) => l.part === JOINT);
+    const lost = solveModel(writeModel(lines.filter((_, i) => i !== first)), table);
+    same('a pin whose partner has gone is alone, not lost',
+      lost.stray.map((s) => s.alone).join(), 'true');
+
+    const away = solveModel(writeModel(lines.map((l, i) =>
+      (i === first ? { ...l, t: [l.t[0] + 1000, l.t[1], l.t[2]] } : l))), table);
+    same('and a pin dropped away from any hole is lost, and takes its partner with it',
+      away.stray.map((s) => s.alone).join(), 'false,true');
+  }
+
   // A mark that does not lie along the same axis as the rest is a second turning
   // plane, and this solves one. It has to say so rather than answer anyway.
   let tilted = false;

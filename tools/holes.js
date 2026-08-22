@@ -5,8 +5,8 @@
 // library, so it carries the answers instead. That is the whole difference between
 // the two, and this file is what closes it.
 //
-// It comes out around 150 kB, a quarter of that over the wire, for some 1800
-// parts. Run it again when the library is updated, or never.
+// It comes out around 310 kB, a fifth of that over the wire, for some 2100 parts.
+// Run it again when the library is updated, or when what counts as a hole changes.
 // LDraw parts are CC BY 4.0 — https://www.ldraw.org
 
 import { colourName, describe, findLibrary, holesOf } from '../library.js';

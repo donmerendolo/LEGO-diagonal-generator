@@ -170,7 +170,7 @@ export function solveModel(text, library) {
 
   markers.forEach((marker, k) => {
     const body = bodies[owner[k]];
-    if (!body) { stray.push(marker); return; }
+    if (!body) { stray.push({ marker, alone: false }); return; }
     body.markers.push(marker);
     if (marker.part === FIXED) { body.pinned.push(marker); fixed.push({ body, marker }); return; }
     if (!joints.has(marker.colour)) joints.set(marker.colour, []);
@@ -180,7 +180,7 @@ export function solveModel(text, library) {
   // One pin of a colour has nobody to meet. It is a half-finished thought, not a
   // constraint, and silently dropping it would leave the model looking solved.
   for (const [colour, group] of joints)
-    if (group.length < 2) { stray.push(group[0].marker); joints.delete(colour); }
+    if (group.length < 2) { stray.push({ marker: group[0].marker, alone: true }); joints.delete(colour); }
 
   // Being fixed is not an equation, it is a freedom the part does not have. One pin
   // leaves it its angle, and about that pin rather than about its own origin; two
@@ -291,8 +291,21 @@ export function report(res, name, library) {
   // have got away with before. So it reports the number and leaves the verdict.
   say.push(`Off by ${(res.worst * MM).toFixed(3)} mm at worst.`);
 
-  for (const marker of stray)
-    say.push(`WARNING  a marker at ${marker.t.map((v) => +v.toFixed(2)).join(' ')} ` +
-             `is in no part's hole, ignored`);
+  // Studio will not tell you where a part is, but the colour is right there on the
+  // screen: it is the one thing about a mark you can pick out from across the model,
+  // so it is what says which mark this is. On a fix pin the colour means nothing to
+  // the answer — here it is only how you find the thing.
+  //
+  // And the two ways of being ignored are not the same mistake. A pin that is in no
+  // hole has been dropped somewhere it does not belong; a pin that is the only one of
+  // its colour is sitting exactly where it should with nothing to meet. Sending
+  // somebody to look for the first when it is the second wastes an afternoon.
+  for (const { marker, alone } of stray) {
+    const colour = library.colourName(marker.colour);
+    const what = marker.part === FIXED ? `${colour} fix mark` : `${colour} mark`;
+    say.push(`WARNING  the ${what} at ${marker.t.map((v) => +v.toFixed(2)).join(' ')} ` +
+      (alone ? 'is the only one of its colour, nothing to meet' : "is in no part's hole") +
+      ', ignored');
+  }
   return say.join('\n');
 }
