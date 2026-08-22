@@ -7,6 +7,8 @@ const STRINGS = {
     marks: 'Marks', join: 'Join', fix: 'Fix',
     open: '📤 Solve .ldr or .io',
     howTo: 'How this works →',
+    source: 'Source',
+    chain: 'Chain generator',
     working: 'Reading the part library…',
     tooMany: 'More than {n} joints: two of them share a colour, and the .ldr cannot tell ' +
              'them apart.',
@@ -25,6 +27,8 @@ const STRINGS = {
     marks: 'Marcas', join: 'Unir', fix: 'Fijar',
     open: '📤 Resolver .ldr o .io',
     howTo: 'Cómo funciona →',
+    source: 'Código',
+    chain: 'Generador de cadenas',
     working: 'Leyendo la librería de piezas…',
     tooMany: 'Más de {n} uniones: dos comparten color y el .ldr no puede distinguirlas.',
     board: 'Tablero', angle: 'Ángulo', level: 'Nivel (eje vertical)', remove: 'Quitar',

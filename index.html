@@ -66,6 +66,7 @@
   .foot .big:last-child { margin-bottom:0; }
   #file { display:none; }
   .hint { display:block; font-size:12px; color:#6d7d8f; text-align:center; }
+  .foot .hint + .hint { margin-top:8px; }
   main { position:relative; }
   #sheet { position:absolute; inset:0; background:#fff; padding:16px 16px 16px 20px;
            overflow:auto; }
@@ -175,6 +176,14 @@
   <div class="foot">
     <button class="big" id="save" data-i18n="save"></button>
     <button class="big" id="reset" data-i18n="reset"></button>
+    <!-- The two links that are not about the model on the board: where this came
+         from, and the other one of these. -->
+    <div class="hint">
+      <a data-i18n="source" target="_blank" rel="noopener"
+         href="https://github.com/donmerendolo/LEGO-diagonal-generator"></a> ·
+      <a data-i18n="chain" target="_blank" rel="noopener"
+         href="https://donmerendolo.github.io/LEGO-chain-generator/"></a>
+    </div>
   </div>
 </aside>
 
