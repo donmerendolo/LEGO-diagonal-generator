@@ -44,7 +44,7 @@ attachment.
 
 ### 5. Remove or hide the attachment so that only the submodel and the two beams remain
 
-If you're exporting .io files, hidden parts and submodels are ignored by the tool entirely, and they won't be in the output file.
+If you're exporting .io files, hidden parts and submodels at the top level are ignored and they won't be in the output file. Hidden parts inside submodels will be in the output file *shown*, but they won't be taken into account by the solver.
 
 <p align="center">
   <img src="tutorial/tutorial-image-6.png" alt="Submodel and two beams" width="600">

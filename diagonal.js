@@ -13,9 +13,11 @@ import { colourName, describe, findLibrary, holesOf } from './library.js';
 import { readStudio } from './io.js';
 import { report, solveModel, withoutMarks } from './model.js';
 
-const readModel = async (path) => (path.toLowerCase().endsWith('.io')
+// A .ldr is only its text. An .io also knows what Studio was hiding, which a .ldr
+// exported from Studio does not carry — the two files are otherwise the same.
+const source = async (path) => (path.toLowerCase().endsWith('.io')
   ? readStudio(Deno.readFileSync(path))
-  : Deno.readTextFileSync(path));
+  : { text: Deno.readTextFileSync(path), hidden: new Set() });
 
 export async function run(path, outPath, root) {
   const library = {
@@ -23,7 +25,8 @@ export async function run(path, outPath, root) {
     describe: (part) => describe(root, part),
     colourName: (code) => colourName(root, code),
   };
-  const res = solveModel(await readModel(path), library);
+  const { text, hidden } = await source(path);
+  const res = solveModel(text, library, hidden);
   Deno.writeTextFileSync(outPath, withoutMarks(res.text));
   console.log(report(res, path, library) + `\n\nwritten ${outPath}`);
   return res;

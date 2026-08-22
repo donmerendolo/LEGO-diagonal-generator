@@ -151,20 +151,37 @@ for (const flip of [1, -1]) {
 {
   const model = ['0 FILE t',
     '1 71 0 0 0 1 0 0 0 1 0 0 0 1 41239.dat',
-    '1 71 40 0 0 1 0 0 0 1 0 0 0 1 32271.dat'].join('\n');
+    '1 71 40 0 0 1 0 0 0 1 0 0 0 1 32271.dat',
+    '1 71 80 0 0 1 0 0 0 1 0 0 0 1 sub.ldr',
+    '0 FILE sub.ldr',
+    '1 71 0 0 0 1 0 0 0 1 0 0 0 1 32316.dat'].join('\n');
   const own = ['0 FILE t',
     '11 16 1 False 0 0.000000 0.000000 0.000000 1 0 0 0 1 0 0 0 1 41239.dat',
-    '11 16 2 True 0 40.000000 0.000000 0.000000 1 0 0 0 1 0 0 0 1 32271.dat'].join('\n');
-  const kept = withoutHidden(model, own);
-  same('a hidden part is left out', /32271/.test(parseModel(kept)
-    .filter((l) => l.part).map((l) => l.part).join(' ')), false);
-  same('and the one beside it is not', parseModel(kept).filter((l) => l.part).length, 1);
-  same('and the answer says what it left out', /hidden in Studio/.test(kept), true);
+    '11 16 2 True 0 40.000000 0.000000 0.000000 1 0 0 0 1 0 0 0 1 32271.dat',
+    '11 16 3 False 0 80.000000 0.000000 0.000000 1 0 0 0 1 0 0 0 1 sub.ldr',
+    '0 FILE sub.ldr',
+    '11 16 4 True 0 0.000000 0.000000 0.000000 1 0 0 0 1 0 0 0 1 32316.dat'].join('\n');
+  const { text, hidden } = withoutHidden(model, own);
+  const parts = parseModel(text).filter((l) => l.part).map((l) => l.part);
+
+  // At the top level it is something set aside, so it goes, and the file says so.
+  same('a hidden part at the top level is left out', parts.includes('32271.dat'), false);
+  same('and the one beside it stays', parts.includes('41239.dat'), true);
+  same('and the answer says what it left out', /hidden in Studio/.test(text), true);
+
+  // Inside a submodel it is part of that build. It comes out exactly as it went in and
+  // is named instead, so its holes can be passed over without the line being touched.
+  same('a hidden part inside a submodel is left alone', parts.includes('32316.dat'), true);
+  same('and named rather than edited', [...hidden].map((at) => text.split('\n')[at]).join(),
+    '1 71 0 0 0 1 0 0 0 1 0 0 0 1 32316.dat');
+
   // Two copies that do not line up are two different models, and picking lines out of
   // one by counting along the other would delete whatever happened to be at that spot.
-  same('but nothing is left out when the two copies disagree',
-    withoutHidden(model, own.split('\n').slice(0, 2).join('\n')), model);
+  const muddled = withoutHidden(model, own.split('\n').slice(0, 3).join('\n'));
+  same('but nothing is touched when the two copies disagree', muddled.text, model);
+  same('and nothing is passed over either', muddled.hidden.size, 0);
 }
+
 
 const root = findLibrary();
 if (!root) {
@@ -268,6 +285,30 @@ const table = {
   try { solveModel(crooked, table); } catch (err) { complained = err.message; }
   same('and marks lying across each other are refused',
     /same axis/.test(complained), true);
+}
+
+// And the point of naming them rather than deleting them: the line is still in the
+// file, and the answer still writes it out, but a mark cannot land in a hole that
+// nobody can see. The Tan pair leans on the submodel's only part; the Green pair does
+// not, so there is still something to solve either way.
+{
+  const model = ['0 FILE t',
+    '1 71 0 0 0 1 0 0 0 1 0 0 0 1 sub.ldr',
+    '1 71 0 0 200 1 0 0 0 1 0 0 0 1 41239.dat',
+    '1 71 0 0 500 1 0 0 0 1 0 0 0 1 41239.dat',
+    '1 19 0 0 0 0 -1 0 1 0 0 0 0 1 3749.dat',
+    '1 19 0 0 200 0 -1 0 1 0 0 0 0 1 3749.dat',
+    '1 2 0 0 320 0 -1 0 1 0 0 0 0 1 3749.dat',
+    '1 2 0 0 380 0 -1 0 1 0 0 0 0 1 3749.dat',
+    '0 FILE sub.ldr',
+    '1 71 0 0 0 1 0 0 0 1 0 0 0 1 41239.dat'].join('\n');
+  const inside = model.split('\n').lastIndexOf('1 71 0 0 0 1 0 0 0 1 0 0 0 1 41239.dat');
+  const seen = solveModel(model, table);
+  const not = solveModel(model, table, new Set([inside]));
+  same('every mark lands somewhere while the part is visible', seen.stray.length, 0);
+  same('and two of them have nowhere once it is hidden', not.stray.length, 2);
+  same('but the part is still in what comes out',
+    parseModel(not.text).filter((l) => l.part === '41239.dat').length, 3);
 }
 
 // Same model, same answer, or the two front ends have quietly drifted apart and

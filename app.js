@@ -732,12 +732,12 @@ $('file').addEventListener('change', async (ev) => {
   $('output').textContent = t('working');
   $('sheet').hidden = false;
   try {
-    const text = /\.io$/i.test(file.name)
+    const { text, hidden } = /\.io$/i.test(file.name)
       ? await readStudio(new Uint8Array(await file.arrayBuffer()))
-      : await file.text();
+      : { text: await file.text(), hidden: new Set() };
     const { report, solveModel, withoutMarks } = await import('./model.js');
     const lib = await ldrawTable();
-    const res = solveModel(text, lib);
+    const res = solveModel(text, lib, hidden);
     $('output').textContent = report(res, file.name, lib);
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([withoutMarks(res.text)], { type: 'text/plain' }));

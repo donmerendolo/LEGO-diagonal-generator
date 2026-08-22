@@ -53,26 +53,42 @@ export async function readZipEntry(bytes, want) {
 // the same place to a thousandth. If they do not line up, nothing is left out. Solving
 // a part that was out of sight is a smaller mistake than losing one.
 //
-// The line is not deleted but replaced by a comment, so the answer says what it left
-// out and where, and says it in the file rather than only on the way past.
+// Hidden at the top level and hidden inside a submodel are not the same thing, and
+// they do not get the same treatment.
+//
+// At the top level it is something you set aside: it goes, and its line is replaced by
+// a comment rather than deleted, so the answer says what it left out and where, in the
+// file rather than only on the way past.
+//
+// Inside a submodel it is part of that build. The answer never touches what is inside
+// a submodel and does not start now — the line comes out exactly as it went in. What
+// it does not get to be is somewhere a mark can land: a hole nobody can see is not a
+// hole a pin was put in, and letting it claim one would hang the mark on the wrong
+// body. Which is why those come back named instead of edited.
 export function withoutHidden(model, own) {
   const lines = model.split(/\r?\n/);
   const placed = [];
+  let block = 0;                        // 1 is the model on the table, then the submodels
   lines.forEach((raw, at) => {
-    const f = raw.trim().split(/\s+/);
-    if (f[0] === '1') placed.push({ at, f });
+    const line = raw.trim();
+    if (/^0\s+FILE\b/i.test(line)) { block++; return; }
+    const f = line.split(/\s+/);
+    if (f[0] === '1') placed.push({ at, f, top: block <= 1 });
   });
   const theirs = own.split(/\r?\n/)
     .map((raw) => raw.trim().split(/\s+/)).filter((f) => f[0] === '11');
 
   const lineUp = placed.length === theirs.length && placed.every(({ f }, i) =>
     [0, 1, 2].every((k) => Math.abs(+f[2 + k] - +theirs[i][5 + k]) < 0.001));
-  if (!lineUp) return model;
+  if (!lineUp) return { text: model, hidden: new Set() };
 
-  placed.forEach(({ at, f }, i) => {
-    if (theirs[i][3] === 'True') lines[at] = `0 hidden in Studio, left out: ${f.slice(14).join(' ')}`;
+  const hidden = new Set();
+  placed.forEach(({ at, f, top }, i) => {
+    if (theirs[i][3] !== 'True') return;
+    if (top) lines[at] = `0 hidden in Studio, left out: ${f.slice(14).join(' ')}`;
+    else hidden.add(at);
   });
-  return lines.join('\n');
+  return { text: lines.join('\n'), hidden };
 }
 
 // Studio writes the file with a byte order mark, which is one more thing than
@@ -82,6 +98,6 @@ export async function readStudio(bytes) {
   try {
     return withoutHidden(model, (await readZipEntry(bytes, 'modelv2.ldr')).replace(/^﻿/, ''));
   } catch {
-    return model;                       // an .io old enough not to have that copy
+    return { text: model, hidden: new Set() };   // an .io old enough not to have that copy
   }
 }

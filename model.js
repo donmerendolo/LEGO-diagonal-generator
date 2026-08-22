@@ -58,7 +58,8 @@ function holesUnder(part, m, t, blocks, library, out, depth = 0) {
   }
   if (depth > 8) return out;                    // a submodel that contains itself
   for (const line of inner)
-    if (line.part) holesUnder(line.part, mul(m, line.m), apply(m, t, line.t), blocks, library, out, depth + 1);
+    if (line.part && !line.hidden)
+      holesUnder(line.part, mul(m, line.m), apply(m, t, line.t), blocks, library, out, depth + 1);
   return out;
 }
 
@@ -138,8 +139,12 @@ export function moved(line, turn, slide, c, frame = UPRIGHT) {
   };
 }
 
-export function solveModel(text, library) {
+// `hidden` is the line numbers Studio was hiding inside a submodel — see io.js. They
+// stay in the file untouched and come out of it untouched; all this does is keep their
+// holes from being somewhere a mark can land.
+export function solveModel(text, library, hidden = new Set()) {
   const { lines, blocks, top } = readModel(text);
+  for (const at of hidden) if (lines[at]) lines[at].hidden = true;
   const isMark = (l) => l.part === FIXED || l.part === JOINT;
   const markers = top.filter(isMark);
   if (!markers.length) throw new Error('no marker pins in that model: nothing to solve');
