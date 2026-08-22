@@ -477,11 +477,43 @@ function turnBy(g, at, ev) {
 
 // ---------- pointer ----------
 
-function atPointer(ev) {
+const atClient = ([x, y]) => {
   const p = board.createSVGPoint();
-  p.x = ev.clientX; p.y = ev.clientY;
+  p.x = x; p.y = y;
   const q = p.matrixTransform(board.getScreenCTM().inverse());
   return [q.x, q.y];
+};
+const atPointer = (ev) => atClient([ev.clientX, ev.clientY]);
+
+// Zooming, wherever it is asked for: the point under the pointer is the one that does
+// not move, because that is the one you were looking at.
+function zoomBy(k, at) {
+  const w = Math.min(6000, Math.max(120, view.w * k)), scale = w / view.w;
+  view.x = at[0] - (at[0] - view.x) * scale;
+  view.y = at[1] - (at[1] - view.y) * scale;
+  view.w = w; view.h *= scale;
+}
+
+// A phone has neither a second mouse button nor a wheel, so two fingers do both jobs:
+// the board follows the middle of them, and grows or shrinks with the distance between
+// them. One finger is left to mean what it means everywhere else.
+const fingers = new Map();
+let gesture = null;
+
+const spread = () => {
+  const [a, b] = [...fingers.values()];
+  return { at: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], gap: Math.hypot(a[0] - b[0], a[1] - b[1]) };
+};
+
+function pinch() {
+  const now = spread();
+  const at = atClient(gesture.at);
+  zoomBy(gesture.gap > 8 && now.gap > 8 ? gesture.gap / now.gap : 1, at);
+  const perPixel = view.w / board.clientWidth;
+  view.x -= (now.at[0] - gesture.at[0]) * perPixel;
+  view.y -= (now.at[1] - gesture.at[1]) * perPixel;
+  gesture = now;
+  render();
 }
 
 // Moving and letting go are listened for on the window, not on the board. The
@@ -493,6 +525,17 @@ board.addEventListener('dragstart', (ev) => ev.preventDefault());
 
 board.addEventListener('pointerdown', (ev) => {
   ev.preventDefault();
+  fingers.set(ev.pointerId, [ev.clientX, ev.clientY]);
+  // A second finger means the gesture was never about a part. Whatever the first one
+  // had hold of, it lets go of it where it is — one step to undo, not a part left
+  // halfway to somewhere while the board slides out from under it.
+  if (fingers.size === 2) {
+    pending = panning = state.drag = null;
+    board.classList.remove('panning');
+    gesture = spread();
+    render();
+    return;
+  }
   if (ev.button === 2) {
     panning = [ev.clientX, ev.clientY];
     board.classList.add('panning');
@@ -517,6 +560,8 @@ board.addEventListener('pointerdown', (ev) => {
 });
 
 globalThis.addEventListener('pointermove', (ev) => {
+  if (fingers.has(ev.pointerId)) fingers.set(ev.pointerId, [ev.clientX, ev.clientY]);
+  if (gesture) { if (fingers.size === 2) pinch(); return; }
   if (panning) {
     const perPixel = view.w / board.clientWidth;
     view.x -= (ev.clientX - panning[0]) * perPixel;
@@ -568,13 +613,19 @@ globalThis.addEventListener('pointermove', (ev) => {
   else carry(pending, at, ev);
 });
 
-globalThis.addEventListener('pointerup', () => {
+globalThis.addEventListener('pointerup', (ev) => {
   // Cleared before anything else is done with them. Whatever goes wrong below,
   // the gesture is over — the alternative is a part that carries on turning after
   // the button is up, because an error on the way out skipped the tidying.
   const was = pending;
   pending = null;
   state.drag = null;
+
+  // Taking one finger off ends the pinch. The one still down does not then take up a
+  // drag it never started: with nothing pending, it moves nothing until it is put
+  // down again.
+  fingers.delete(ev.pointerId);
+  if (fingers.size < 2) gesture = null;
 
   if (panning) { panning = null; board.classList.remove('panning'); }
   else if (was?.part !== undefined && !was.moved) {
@@ -584,20 +635,16 @@ globalThis.addEventListener('pointerup', () => {
   recompute();
 });
 
-globalThis.addEventListener('pointercancel', () => {
-  pending = panning = state.drag = null;
+globalThis.addEventListener('pointercancel', (ev) => {
+  pending = panning = state.drag = gesture = null;
+  fingers.delete(ev.pointerId);
   board.classList.remove('panning');
   render();
 });
 
 board.addEventListener('wheel', (ev) => {
   ev.preventDefault();
-  const k = Math.min(4, Math.max(0.25, Math.exp(ev.deltaY * 0.0015)));
-  const at = atPointer(ev);                          // fixed point of the zoom
-  const w = Math.min(6000, Math.max(120, view.w * k)), scale = w / view.w;
-  view.x = at[0] - (at[0] - view.x) * scale;
-  view.y = at[1] - (at[1] - view.y) * scale;
-  view.w = w; view.h *= scale;
+  zoomBy(Math.min(4, Math.max(0.25, Math.exp(ev.deltaY * 0.0015))), atPointer(ev));
   render();
 }, { passive: false });
 
@@ -771,6 +818,15 @@ $('save').onclick = () => {
   a.download = 'diagonals.ldr';
   a.click();
 };
+
+// A finger is not a mouse pointer. Eight hundred units across a phone makes a hole
+// four pixels wide, which is not something anybody can hit — so the board starts at
+// life size, a unit to a pixel, and only shows less of the world when there is less
+// screen to show it on. On anything wide enough it is the eight hundred it always was.
+view.w = Math.min(800, board.clientWidth || 800);
+view.h = view.w * (board.clientHeight || 600) / (board.clientWidth || 800);
+view.x = -view.w / 2;
+view.y = -view.h / 2;
 
 buildPalette();
 applyLanguage();

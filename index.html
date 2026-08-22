@@ -10,9 +10,23 @@
   /* The page itself never scrolls; the panels scroll inside themselves. The single
      row has to be minmax(0, 1fr) and not the implicit auto, or it is sized by its
      contents and a tall panel stretches it straight past the bottom of the window. */
+  /* 100dvh and not 100vh, because on a phone 100vh is the window with the address bar
+     pretended away, and the buttons at the bottom end up behind it. */
   body { margin:0; font:16px/1.4 system-ui, sans-serif; color:var(--ink); background:#eef2f7;
          display:grid; grid-template-columns:190px 1fr 250px; grid-template-rows:minmax(0, 1fr);
-         height:100vh; overflow:hidden; }
+         height:100vh; height:100dvh; overflow:hidden; }
+
+  /* Narrow enough that three columns cannot all be useful: the board goes on top with
+     the panels side by side underneath, which is the same three boxes stood the other
+     way round. Everything inside them already scrolls in the middle and keeps its
+     buttons at the end, so nothing else has to change. */
+  @media (max-width: 740px) {
+    body { grid-template-columns:1fr 1fr; grid-template-rows:minmax(0, 1fr) minmax(0, 46dvh); }
+    main { grid-area:1 / 1 / 2 / 3; }
+    aside:first-of-type { grid-area:2 / 1 / 3 / 2; border-right:1px solid var(--line); }
+    aside:last-of-type  { grid-area:2 / 2 / 3 / 3; }
+    aside { border-top:1px solid var(--line); }
+  }
 
   /* Each side panel is a column that scrolls in the middle and not at the ends.
      The buttons that finish a job sit in the part that cannot scroll, so they are
@@ -20,8 +34,9 @@
   /* min-height:0 on both, or the default min-height:auto lets the content push the
      column past the viewport and the whole page scrolls instead of the middle. */
   aside { background:#fff; display:flex; flex-direction:column; overflow:hidden; min-height:0; }
-  aside:first-child { border-right:1px solid var(--line); }
-  aside:last-child { border-left:1px solid var(--line); }
+  /* of-type and not child: the last child of the body is the script tag. */
+  aside:first-of-type { border-right:1px solid var(--line); }
+  aside:last-of-type { border-left:1px solid var(--line); }
   .scroll { flex:1; min-height:0; overflow:auto; padding:12px; }
   .foot { flex:none; padding:12px; border-top:1px solid var(--line); }
 
@@ -40,7 +55,8 @@
   .pick { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
   .pick button { border:2px solid var(--line); border-radius:12px; background:#fff; cursor:pointer;
                  padding:4px 2px; font-size:11px; color:#6d7d8f; }
-  .pick button:hover { border-color:var(--sky); }
+  /* Guarded, or a tap leaves the part lit up as though it were still under the finger. */
+  @media (hover: hover) { .pick button:hover { border-color:var(--sky); } }
   .pick img { width:100%; height:48px; object-fit:contain; display:block; pointer-events:none; }
 
   /* Two ways to mark a hole, and only two, so they are shown side by side with the
@@ -70,6 +86,10 @@
   main { position:relative; }
   #sheet { position:absolute; inset:0; background:#fff; padding:16px 16px 16px 20px;
            overflow:auto; }
+  /* The report is the whole answer, so on a phone it gets the whole screen and not
+     the two fifths of it the board happens to be sitting in. After the rule it
+     overrides, because they are the same weight and the last one wins. */
+  @media (max-width: 740px) { #sheet { position:fixed; z-index:1; } }
   #output { margin:0; font:13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
             white-space:pre; }
   #close { position:absolute; top:8px; right:12px; border:0; background:none; cursor:pointer;
